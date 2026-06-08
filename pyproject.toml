@@ -1,0 +1,160 @@
+[project]
+name = "kill-nonlinearities"
+version = "0.1.0"
+description = "Regularizing neural networks toward sign-consistent pre-activations so that unnecessary nonlinearities can be identified and removed."
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [{ name = "d0rbu", email = "henryandrecastillo@gmail.com" }]
+keywords = [
+    "deep-learning",
+    "interpretability",
+    "regularization",
+    "pytorch",
+    "network-pruning",
+]
+dependencies = [
+    "torch>=2.12",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12"]
+build-backend = "uv_build"
+
+# ---------------------------------------------------------------------------
+# Dev dependencies (PEP 735). Installed by `uv sync`; add with `uv add --dev`.
+# ---------------------------------------------------------------------------
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "hypothesis>=6",
+    "ruff>=0.15",
+    "ty>=0.0.44",
+    "pre-commit>=4",
+]
+
+# ---------------------------------------------------------------------------
+# torch is pulled from PyTorch's CPU wheel index by default: the plain PyPI
+# wheel on Linux is the (multi-GB) CUDA build. To use a GPU build, point this
+# index at e.g. https://download.pytorch.org/whl/cu130 instead. See
+# docs/development/setup.md.
+# ---------------------------------------------------------------------------
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+# ---------------------------------------------------------------------------
+# Ruff: linter + formatter. Shared settings are top-level; lint/format split
+# into their own tables. Target the requires-python floor (3.13) so pyupgrade
+# (UP) never rewrites to syntax that breaks on our minimum supported version.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 88
+indent-width = 4
+target-version = "py313"
+src = ["src", "tests"]
+extend-exclude = ["build", "dist"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes (undefined names, unused imports)
+    "I",   # isort (import ordering)
+    "UP",  # pyupgrade (modern syntax for target-version)
+    "B",   # flake8-bugbear (likely bugs)
+    "SIM", # flake8-simplify
+    "C4",  # flake8-comprehensions
+    "N",   # pep8-naming
+    "PIE", # flake8-pie (unnecessary code)
+    "RET", # flake8-return
+    "PTH", # flake8-use-pathlib (prefer pathlib over os.path)
+    "TID", # flake8-tidy-imports (ban relative imports)
+    "RUF", # Ruff-specific rules
+]
+ignore = [
+    "E501", # line length is enforced by the formatter, not the linter
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py commonly re-exports names.
+"__init__.py" = ["F401"]
+# Tests may use assert and looser conventions.
+"tests/**/*.py" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kill_nonlinearities"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+
+# ---------------------------------------------------------------------------
+# ty: static type checker (Astral). ty is beta (0.0.x); re-verify rule names
+# on upgrade. We check against the 3.13 floor, the lowest version we support.
+# ---------------------------------------------------------------------------
+[tool.ty.environment]
+python-version = "3.13"
+root = ["./src"]
+
+[tool.ty.src]
+include = ["src", "tests"]
+respect-ignore-files = true
+
+[tool.ty.rules]
+# Escalate normally-lenient diagnostics. (unresolved-import, invalid-assignment
+# and call-non-callable are already "error" by default.)
+possibly-unresolved-reference = "error"
+division-by-zero = "error"
+deprecated = "error"
+
+[tool.ty.terminal]
+# Treat warnings as failures so CI/pre-commit stays strict.
+error-on-warning = true
+
+# ---------------------------------------------------------------------------
+# pytest + pytest-cov. The project is installed by uv (editable), so the
+# package imports as `kill_nonlinearities` without sys.path hacks.
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+    "--cov=kill_nonlinearities",
+    "--cov-report=term-missing",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = ["kill_nonlinearities"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
