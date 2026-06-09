@@ -60,3 +60,28 @@ def test_sign_consistency_loss_saturated_gradient_is_zero() -> None:
     sign_consistency_loss([z], tau=tau, eps=1e-6).backward()
     assert z.grad is not None
     torch.testing.assert_close(z.grad, torch.zeros_like(z))
+
+
+def test_sign_consistency_loss_single_site_is_that_sites_mean_entropy() -> None:
+    """Single-site loss == that site's mean clamped per-neuron entropy (spec §7)."""
+    tau = 1.0
+    eps = 1e-6
+    z = torch.tensor([[1.0, -1.0, 0.5], [-2.0, 2.0, -0.5]])
+    p = batch_fraction_positive(z, tau).clamp(eps, 1.0 - eps)
+    expected = binary_entropy(p).mean()
+    out = sign_consistency_loss([z], tau=tau, eps=eps)
+    torch.testing.assert_close(out, expected)
+
+
+def test_sign_consistency_loss_gradient_flows_to_all_pre_activations() -> None:
+    """loss.backward() produces finite, non-zero grads on interior pre-acts (spec §7)."""
+    tau = 1.0
+    site_a = torch.tensor(
+        [[0.5, -0.5], [-0.3, 0.3]], dtype=torch.float32, requires_grad=True
+    )
+    site_b = torch.tensor([[0.2, -0.4, 0.1]], dtype=torch.float32, requires_grad=True)
+    sign_consistency_loss([site_a, site_b], tau=tau, eps=1e-6).backward()
+    for site in (site_a, site_b):
+        assert site.grad is not None
+        assert torch.all(torch.isfinite(site.grad))
+        assert torch.any(site.grad != 0.0)
