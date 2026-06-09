@@ -101,6 +101,18 @@ WANDB_MODE=disabled ...   # no logging at all (what the test suite uses)
   [`tests/conftest.py`](../../tests/conftest.py).
 - **Artifacts** are saved under `runs/<name>/` *and* logged via `wandb.Image` (figures) and
   `wandb.Video` (GIFs — no ffmpeg, the gif path is passed directly).
+- **Sweeps** over `{lr, epochs, batch_size, λ}`: after a one-time login, launch with
+  [`scripts/launch_sweep.py`](../../scripts/launch_sweep.py):
+
+  ```bash
+  uv run wandb login
+  uv run --no-sync python scripts/launch_sweep.py --method grid --count 24
+  ```
+
+  The agent runs `run_experiment` once per trial (each with a unique run name so trials don't
+  share an output dir), logging to wandb and optimizing the `val/acc` metric. For an
+  **offline** trade-off curve without wandb, use
+  [`scripts/lambda_sweep.py`](../../scripts/lambda_sweep.py) instead.
 
 ## `pre-commit`
 
