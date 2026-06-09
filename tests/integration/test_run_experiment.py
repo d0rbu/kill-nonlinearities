@@ -25,6 +25,7 @@ from kill_nonlinearities.data.datasets import make_dataloaders
 from kill_nonlinearities.experiments.run import ExperimentResult, run_experiment
 from kill_nonlinearities.training.logging import InMemoryLogger
 from kill_nonlinearities.training.schedule import checkpoint_steps
+from kill_nonlinearities.viz.animation import gif_frame_count
 
 
 def make_synthetic_config(tmp_path: Path) -> ExperimentConfig:
@@ -176,3 +177,23 @@ def test_all_artifact_files_exist_and_are_non_empty(
         assert isinstance(path, Path), key
         assert path.is_file(), key
         assert path.stat().st_size > 0, key
+
+
+def test_both_gifs_have_one_frame_per_checkpoint(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """activation_gif and qi_bimodality_gif each have len(checkpoint_steps) frames."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    train_loader, _, _ = make_dataloaders(synthetic_config)
+    steps_per_epoch = len(train_loader)
+    total_steps = synthetic_config.train.epochs * steps_per_epoch
+    n_checkpoints = len(
+        checkpoint_steps(
+            total_steps, steps_per_epoch, synthetic_config.checkpoint.every_epochs
+        )
+    )
+
+    assert len(result.frames) == n_checkpoints
+    assert gif_frame_count(result.artifact_paths["activation_gif"]) == n_checkpoints
+    assert gif_frame_count(result.artifact_paths["qi_bimodality_gif"]) == n_checkpoints
