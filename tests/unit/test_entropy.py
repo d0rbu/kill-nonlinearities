@@ -63,6 +63,21 @@ def test_binary_entropy_gradcheck_open_interval_float64() -> None:
     assert torch.autograd.gradcheck(binary_entropy, (p,))
 
 
+def test_binary_entropy_unclamped_backward_is_nan_at_endpoints() -> None:
+    """The DELIBERATE [R1] asymmetry: backward is non-finite (NaN) at p in {0, 1}.
+
+    binary_entropy's FORWARD is exactly 0 at the endpoints (xlogy), but its
+    BACKWARD is log((1-p)/p) -> ±inf there, i.e. NaN. The loss path (loss.py)
+    clamps p BEFORE calling binary_entropy precisely because of this. This test
+    guards against someone "fixing" binary_entropy to clamp internally, which
+    would silently make the loss-path clamp dead (spec §4.4 [R1]).
+    """
+    p = torch.tensor([0.0, 1.0], requires_grad=True)
+    binary_entropy(p).sum().backward()
+    assert p.grad is not None
+    assert not torch.isfinite(p.grad).all()
+
+
 def test_batch_fraction_positive_shape_is_num_neurons() -> None:
     """batch_fraction_positive([B, N]) -> [N] (spec §4.4)."""
     z = torch.randn(8, 5)
