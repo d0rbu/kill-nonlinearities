@@ -20,8 +20,10 @@ from kill_nonlinearities.config import (
     TrainConfig,
     WandbConfig,
 )
+from kill_nonlinearities.data.datasets import make_dataloaders
 from kill_nonlinearities.experiments.run import ExperimentResult, run_experiment
 from kill_nonlinearities.training.logging import InMemoryLogger
+from kill_nonlinearities.training.schedule import checkpoint_steps
 
 
 def make_synthetic_config(tmp_path: Path) -> ExperimentConfig:
@@ -109,3 +111,20 @@ def test_run_experiment_returns_populated_result(
         "activation_gif",
         "qi_bimodality_gif",
     }
+
+
+def test_checkpoints_land_at_expected_steps(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """Checkpoint count/positions match checkpoint_steps for the realized total_steps."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    train_loader, _, _ = make_dataloaders(synthetic_config)
+    steps_per_epoch = len(train_loader)
+    total_steps = synthetic_config.train.epochs * steps_per_epoch
+    expected = checkpoint_steps(
+        total_steps, steps_per_epoch, synthetic_config.checkpoint.every_epochs
+    )
+
+    assert len(result.train_result.checkpoint_paths) == len(expected)
+    assert all(p.exists() for p in result.train_result.checkpoint_paths)
