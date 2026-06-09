@@ -125,3 +125,37 @@ def test_set_modes_rejects_out_of_range_values() -> None:
         act.set_modes(torch.tensor([0, 3, 1], dtype=torch.int64))
     with pytest.raises(ValueError, match="0, 1, 2"):
         act.set_modes(torch.tensor([-1, 0, 1], dtype=torch.int64))
+
+
+def test_gradient_routing_is_exact_per_mode() -> None:
+    """Backward routes grads exactly: ZERO→0, IDENTITY→1, RELU→(z>0).float()."""
+    act = SelectiveReLU(num_features=3)
+    act.set_modes(
+        torch.tensor(
+            [
+                int(ActivationMode.RELU),
+                int(ActivationMode.ZERO),
+                int(ActivationMode.IDENTITY),
+            ]
+        )
+    )
+    z = torch.tensor([[-1.0, 5.0, -2.0], [3.0, 5.0, 4.0]], requires_grad=True)
+    out = act(z)
+    out.sum().backward()
+    assert z.grad is not None
+    expected = torch.tensor(
+        [
+            [(z[0, 0] > 0).float(), 0.0, 1.0],
+            [(z[1, 0] > 0).float(), 0.0, 1.0],
+        ]
+    )
+    assert torch.equal(z.grad, expected)
+
+
+def test_relu_subgradient_at_zero_is_zero() -> None:
+    """RELU's subgradient at z==0 is 0 (relu convention), asserted exactly."""
+    act = SelectiveReLU(num_features=1)
+    z = torch.zeros(2, 1, requires_grad=True)
+    act(z).sum().backward()
+    assert z.grad is not None
+    assert torch.equal(z.grad, torch.zeros(2, 1))
