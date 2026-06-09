@@ -282,6 +282,47 @@ def test_k_equals_total_converts_all_neurons_and_logits_finite(
     assert torch.isfinite(logits).all()
 
 
+def test_run_experiment_three_hidden_layers(tmp_path: Path) -> None:
+    """A >=3-hidden-layer model runs the full pipeline cleanly (spec §5).
+
+    Asserts three pre-activation sites (one per hidden layer), site-name alignment
+    across model / neuron_stats / collected pre-activations, and a clean k_sweep
+    producing in-range val+test accuracy for every grid point.
+    """
+    base = make_synthetic_config(tmp_path)
+    config = dataclasses.replace(
+        base,
+        name="it-3layer",
+        model=ModelConfig(input_dim=12, hidden_dims=(6, 5, 4), output_dim=3),
+        probe=ProbeConfig(num_neurons=5, seed=0, batch_size=16),
+    )
+
+    result = run_experiment(config, logger=InMemoryLogger())
+
+    # Three hidden layers -> three pre-activation sites, names aligned everywhere.
+    expected_sites = ("relu0", "relu1", "relu2")
+    assert result.model.site_names == expected_sites
+    pre_by_site = result.frames[0].q_by_site
+    assert tuple(pre_by_site) == expected_sites
+    stat_sites = {s.site for s in result.neuron_stats}
+    assert stat_sites == set(expected_sites)
+    # Per-site neuron counts match the hidden dims (6, 5, 4).
+    site_counts = dict.fromkeys(expected_sites, 0)
+    for s in result.neuron_stats:
+        site_counts[s.site] += 1
+    assert site_counts == {"relu0": 6, "relu1": 5, "relu2": 4}
+
+    # k_sweep is clean: one in-range val+test acc per unique grid point.
+    total = len(result.neuron_stats)
+    expected_grid = make_k_grid(total, config.surgery.num_k)
+    assert [kp.k for kp in result.k_points] == expected_grid
+    for kp in (*result.k_points, *result.random_k_points):
+        assert 0.0 <= kp.val_acc <= 1.0
+        assert 0.0 <= kp.test_acc <= 1.0
+        assert math.isfinite(kp.val_acc)
+        assert math.isfinite(kp.test_acc)
+
+
 def test_config_from_json_builds_nested_config(tmp_path: Path) -> None:
     """config_from_json maps a nested JSON object into an ExperimentConfig (§4.13)."""
     payload = {
