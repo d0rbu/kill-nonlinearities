@@ -5,6 +5,7 @@ from pathlib import Path
 import matplotlib
 
 from kill_nonlinearities.analysis.statistics import NeuronStats
+from kill_nonlinearities.surgery.apply import KPoint
 from kill_nonlinearities.training.trainer import StepMetrics
 from kill_nonlinearities.viz import plots
 
@@ -73,6 +74,38 @@ def test_plot_per_layer_entropy_writes_nonempty_file(tmp_path: Path) -> None:
     """plot_per_layer_entropy writes a non-empty bar chart, one value per layer (§5)."""
     out = tmp_path / "per_layer_entropy.png"
     result = plots.plot_per_layer_entropy(_toy_stats(), out)
+
+    assert result == out
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+def _toy_kpoints() -> list[KPoint]:
+    return [
+        KPoint(k=0, val_acc=0.90, test_acc=0.88),
+        KPoint(k=2, val_acc=0.85, test_acc=0.83),
+        KPoint(k=4, val_acc=0.70, test_acc=0.68),
+    ]
+
+
+def _toy_random_kpoints() -> list[KPoint]:
+    return [
+        KPoint(k=0, val_acc=0.90, test_acc=0.88),
+        KPoint(k=2, val_acc=0.60, test_acc=0.58),
+        KPoint(k=4, val_acc=0.40, test_acc=0.38),
+    ]
+
+
+def test_plot_acc_vs_k_writes_nonempty_file(tmp_path: Path) -> None:
+    """plot_acc_vs_k writes a non-empty figure with val/test + random overlay (§5)."""
+    out = tmp_path / "acc_vs_k.png"
+    result = plots.plot_acc_vs_k(
+        _toy_kpoints(),
+        _toy_random_kpoints(),
+        total=4,
+        lossless_prefix=2,
+        path=out,
+    )
 
     assert result == out
     assert out.exists()
