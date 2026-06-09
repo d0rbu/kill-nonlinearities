@@ -12,7 +12,10 @@ def make_k_grid(total: int, num_k: int) -> list[int]:
 
     Always includes ``0`` and ``total``. The realized length equals the number
     of UNIQUE rounded points, which may be fewer than ``num_k`` on tiny models.
+    Requires ``num_k >= 2`` (the spacing divides by ``num_k - 1``).
     """
+    if num_k < 2:
+        raise ValueError(f"num_k must be >= 2, got {num_k}")
     return sorted({round(i * total / (num_k - 1)) for i in range(num_k)})
 
 

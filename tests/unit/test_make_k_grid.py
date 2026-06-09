@@ -1,5 +1,7 @@
 """Unit tests for analysis.selection.make_k_grid (spec §4.10, §7)."""
 
+import pytest
+
 from kill_nonlinearities.analysis.selection import make_k_grid
 
 
@@ -29,3 +31,9 @@ def test_make_k_grid_tiny_model_returns_unique_points_not_num_k() -> None:
     assert 4 in grid
     # Assert membership/uniqueness, NOT len == num_k.
     assert len(grid) == 5
+
+
+def test_make_k_grid_rejects_num_k_below_two() -> None:
+    """num_k < 2 raises (the spacing divides by num_k - 1)."""
+    with pytest.raises(ValueError, match="num_k"):
+        make_k_grid(total=100, num_k=1)

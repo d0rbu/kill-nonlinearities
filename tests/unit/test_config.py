@@ -110,6 +110,15 @@ def test_surgery_config_rejects_invalid_tie_break() -> None:
     assert SurgeryConfig(tie_break="identity").tie_break == "identity"
 
 
+def test_surgery_config_rejects_num_k_below_two() -> None:
+    """num_k must be >= 2 since make_k_grid divides by (num_k - 1)."""
+    with pytest.raises(ValueError, match="num_k"):
+        SurgeryConfig(num_k=1)
+    with pytest.raises(ValueError, match="num_k"):
+        SurgeryConfig(num_k=0)
+    assert SurgeryConfig(num_k=2).num_k == 2
+
+
 def test_wandb_config_defaults() -> None:
     cfg = WandbConfig()
     assert cfg.project == "kill-nonlinearities"

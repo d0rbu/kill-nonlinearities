@@ -98,6 +98,9 @@ class SurgeryConfig:
             raise ValueError(
                 f"tie_break must be 'zero' or 'identity', got {self.tie_break!r}"
             )
+        if self.num_k < 2:
+            # make_k_grid divides by (num_k - 1); fewer than 2 points is undefined.
+            raise ValueError(f"num_k must be >= 2, got {self.num_k}")
 
 
 @dataclass(frozen=True)
