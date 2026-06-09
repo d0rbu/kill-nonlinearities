@@ -1,0 +1,93 @@
+"""Dataset providers, deterministic dataloaders, and probe selection (spec §4.9)."""
+
+import torch
+from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
+
+from kill_nonlinearities.config import ExperimentConfig
+
+_SYNTHETIC_TRAIN_SIZE = 256
+_SYNTHETIC_TEST_SIZE = 64
+
+
+def _make_synthetic_split(
+    *, size: int, input_dim: int, output_dim: int, generator: torch.Generator
+) -> TensorDataset:
+    """A Gaussian-input TensorDataset with uniform random integer labels (no network)."""
+    x = torch.randn(size, input_dim, generator=generator)
+    y = torch.randint(0, output_dim, (size,), generator=generator)
+    return TensorDataset(x, y)
+
+
+def _build_train_and_test(config: ExperimentConfig) -> tuple[Dataset, Dataset]:
+    """Return the canonical (train, test) datasets for the configured provider.
+
+    Only the synthetic provider is exercised by the offline test suite; the
+    torchvision providers are added in a later task.
+    """
+    dataset = config.data.dataset
+    if dataset == "synthetic":
+        gen = torch.Generator()
+        gen.manual_seed(config.data.split_seed)
+        train = _make_synthetic_split(
+            size=_SYNTHETIC_TRAIN_SIZE,
+            input_dim=config.model.input_dim,
+            output_dim=config.model.output_dim,
+            generator=gen,
+        )
+        test = _make_synthetic_split(
+            size=_SYNTHETIC_TEST_SIZE,
+            input_dim=config.model.input_dim,
+            output_dim=config.model.output_dim,
+            generator=gen,
+        )
+        return train, test
+    raise ValueError(f"unknown dataset {dataset!r}")
+
+
+def make_dataloaders(
+    config: ExperimentConfig,
+) -> tuple[DataLoader, DataLoader, DataLoader]:
+    """Build (train, val, test) loaders (spec §4.9).
+
+    val is carved from the train split via ``random_split`` with an explicit
+    ``torch.Generator(split_seed)``. train shuffles with a seeded generator and
+    honors ``drop_last``; val/test use ``shuffle=False, drop_last=False`` and
+    ``eval_batch_size`` so downstream analysis concatenates in a stable order.
+    """
+    train_full, test_dataset = _build_train_and_test(config)
+
+    n_total = len(train_full)  # ty: ignore[invalid-argument-type]
+    n_val = round(config.data.val_fraction * n_total)
+    n_train = n_total - n_val
+    split_gen = torch.Generator()
+    split_gen.manual_seed(config.data.split_seed)
+    train_dataset, val_dataset = random_split(
+        train_full, [n_train, n_val], generator=split_gen
+    )
+
+    shuffle_gen = torch.Generator()
+    shuffle_gen.manual_seed(config.data.split_seed)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config.data.batch_size,
+        shuffle=True,
+        drop_last=config.data.drop_last,
+        num_workers=config.data.num_workers,
+        generator=shuffle_gen,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=config.data.eval_batch_size,
+        shuffle=False,
+        drop_last=False,
+        num_workers=config.data.num_workers,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=config.data.eval_batch_size,
+        shuffle=False,
+        drop_last=False,
+        num_workers=config.data.num_workers,
+    )
+    return train_loader, val_loader, test_loader

@@ -1,0 +1,89 @@
+"""Functional tests for data/datasets.py (spec §4.9, §7).
+
+Tests use ONLY the synthetic provider — no network, no torchvision download.
+Determinism follows the spec §8 recipe (seeded generators, num_workers=0).
+"""
+
+import torch
+from torch import Tensor
+
+from kill_nonlinearities.config import (
+    DataConfig,
+    ExperimentConfig,
+    ModelConfig,
+    ProbeConfig,
+)
+from kill_nonlinearities.data.datasets import make_dataloaders
+
+
+def _synthetic_config(
+    *,
+    batch_size: int = 8,
+    eval_batch_size: int = 16,
+    val_fraction: float = 0.2,
+    split_seed: int = 0,
+    drop_last: bool = False,
+    seed: int = 0,
+) -> ExperimentConfig:
+    """A tiny, fully-synthetic ExperimentConfig (no network, no download)."""
+    return ExperimentConfig(
+        name="synthetic-test",
+        model=ModelConfig(input_dim=12, hidden_dims=(8,), output_dim=3),
+        data=DataConfig(
+            dataset="synthetic",
+            batch_size=batch_size,
+            eval_batch_size=eval_batch_size,
+            val_fraction=val_fraction,
+            split_seed=split_seed,
+            drop_last=drop_last,
+            num_workers=0,
+        ),
+        probe=ProbeConfig(num_neurons=4, seed=0, batch_size=10),
+    )
+    # `seed` lives on TrainConfig; left at its default here (unused by loaders).
+
+
+def test_synthetic_make_dataloaders_returns_three_loaders() -> None:
+    """make_dataloaders returns exactly (train, val, test)."""
+    config = _synthetic_config()
+    loaders = make_dataloaders(config)
+    assert len(loaders) == 3
+    train, val, test = loaders
+    assert train is not val
+    assert val is not test
+
+
+def test_synthetic_train_batch_shapes() -> None:
+    """Train batches are (x, y) with x flattened to [B, input_dim] and int64 y."""
+    config = _synthetic_config(batch_size=8)
+    train, _, _ = make_dataloaders(config)
+    x, y = next(iter(train))
+    assert isinstance(x, Tensor)
+    assert isinstance(y, Tensor)
+    assert x.shape[0] <= 8
+    assert x.shape[1] == config.model.input_dim
+    assert x.dtype == torch.float32
+    assert y.dtype == torch.int64
+    assert int(y.min()) >= 0
+    assert int(y.max()) < config.model.output_dim
+
+
+def test_synthetic_eval_loaders_use_eval_batch_size() -> None:
+    """val/test loaders batch with eval_batch_size, not the train batch_size."""
+    config = _synthetic_config(batch_size=8, eval_batch_size=16)
+    _, val, test = make_dataloaders(config)
+    assert val.batch_size == 16
+    assert test.batch_size == 16
+
+
+def test_synthetic_val_carved_from_train_by_fraction() -> None:
+    """val is carved from train; train+val cover the full train split."""
+    config = _synthetic_config(val_fraction=0.2)
+    train, val, _ = make_dataloaders(config)
+    n_train = len(train.dataset)  # ty: ignore[invalid-argument-type]
+    n_val = len(val.dataset)  # ty: ignore[invalid-argument-type]
+    total = n_train + n_val
+    assert n_val == round(0.2 * total)
+    assert n_train == total - n_val
+    assert n_val > 0
+    assert n_train > 0
