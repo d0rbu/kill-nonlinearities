@@ -80,6 +80,42 @@ def test_plot_per_layer_entropy_writes_nonempty_file(tmp_path: Path) -> None:
     assert out.stat().st_size > 0
 
 
+def test_build_acc_vs_k_axes_ydata_equals_kpoints() -> None:
+    """The val/test Axes line ydata equals the input k_points accuracies (spec §7)."""
+    k_points = _toy_kpoints()
+    fig, ax = plots._build_acc_vs_k_axes(
+        k_points, _toy_random_kpoints(), total=4, lossless_prefix=2
+    )
+    try:
+        lines = ax.get_lines()
+        val_line = next(
+            line for line in lines if line.get_label() == "val (entropy order)"
+        )
+        test_line = next(
+            line for line in lines if line.get_label() == "test (entropy order)"
+        )
+        random_line = next(
+            line for line in lines if line.get_label() == "val (random baseline)"
+        )
+
+        # matplotlib's get_*data return ArrayLike (np), which ty cannot prove is
+        # Iterable; the runtime values are plain lists/arrays, so wrap + ignore.
+        assert list(val_line.get_xdata()) == [  # ty: ignore[invalid-argument-type]
+            p.k for p in k_points
+        ]
+        assert list(val_line.get_ydata()) == [  # ty: ignore[invalid-argument-type]
+            p.val_acc for p in k_points
+        ]
+        assert list(test_line.get_ydata()) == [  # ty: ignore[invalid-argument-type]
+            p.test_acc for p in k_points
+        ]
+        assert list(random_line.get_ydata()) == [  # ty: ignore[invalid-argument-type]
+            p.val_acc for p in _toy_random_kpoints()
+        ]
+    finally:
+        plots.plt.close(fig)
+
+
 def _toy_kpoints() -> list[KPoint]:
     return [
         KPoint(k=0, val_acc=0.90, test_acc=0.88),
