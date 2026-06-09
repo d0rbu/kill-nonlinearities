@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 import torch
 
 from kill_nonlinearities.analysis.statistics import FrameStats
@@ -64,3 +65,19 @@ def test_render_qi_bimodality_gif_frame_count_via_helper(tmp_path: Path) -> None
     animation.render_qi_bimodality_gif(frames, out)
 
     assert animation.gif_frame_count(out) == len(frames)
+
+
+def test_render_activation_gif_rejects_empty_frames(tmp_path: Path) -> None:
+    """Empty frames (reachable via epochs=0) raise ValueError, not IndexError."""
+    out = tmp_path / "activation.gif"
+    with pytest.raises(ValueError, match="at least one frame"):
+        animation.render_activation_gif([], out)
+    assert not out.exists()
+
+
+def test_render_qi_bimodality_gif_rejects_empty_frames(tmp_path: Path) -> None:
+    """Empty frames raise ValueError, not the np.stack([]) ValueError on no images."""
+    out = tmp_path / "qi_bimodality.gif"
+    with pytest.raises(ValueError, match="at least one frame"):
+        animation.render_qi_bimodality_gif([], out)
+    assert not out.exists()

@@ -41,6 +41,8 @@ def render_activation_gif(frames: Sequence[FrameStats], path: Path) -> Path:
     in a fixed (site, index) layout so the animation reflects weight evolution only.
     One gif frame per ``FrameStats``. Takes a full file ``path`` and returns it.
     """
+    if not frames:
+        raise ValueError("render_activation_gif requires at least one frame")
     neuron_keys = sorted(frames[0].probe_activations.keys())
     images: list[np.ndarray] = []
     for frame in frames:
@@ -72,6 +74,8 @@ def render_qi_bimodality_gif(frames: Sequence[FrameStats], path: Path) -> Path:
     so the drift toward q in {0, 1} (sign consistency) is visible. One gif frame
     per ``FrameStats``. Takes a full file ``path`` and returns it.
     """
+    if not frames:
+        raise ValueError("render_qi_bimodality_gif requires at least one frame")
     images: list[np.ndarray] = []
     for frame in frames:
         pooled: list[float] = []
