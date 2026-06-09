@@ -7,8 +7,10 @@ running **experiment log**. It doubles as the lab notebook: the formal method li
 at the top; what we actually learn from experiments accumulates in
 [Experiment log](#experiment-log) below.
 
-> **Status:** method specified; no experiments run yet. This document describes the
-> *intended* method — it is a design, not a report of results.
+> **Status:** Phase 1a **in progress** — the regularizer, training, analysis, and
+> masked-activation surgery are implemented (see the
+> [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md)). Real
+> MNIST/CIFAR results land in the [experiment log](#experiment-log) as runs complete.
 
 ---
 
@@ -164,10 +166,10 @@ is an *unstable* equilibrium with zero entropy gradient (see failure modes).
 
 ## From consistency to elimination
 
-> **Scope note.** The near-term work is **analysis-first** (phase 1): implement the
-> regularizer and *measure* how sign-consistent the network becomes and at what cost. The
-> actual network surgery below is **phase 2 (future)** — described here so the end-to-end
-> story is on record. See the [roadmap](#roadmap).
+> **Scope note.** Phase 1a is **analysis-first plus masked-activation surgery**: we implement
+> the regularizer, *measure* sign-consistency and its cost, and perform surgery by flipping a
+> neuron's activation **mode** (not by folding linear layers). **Linear-folding / structural
+> pruning remains a later phase** — see the [roadmap](#roadmap).
 
 After training, evaluate the **hard** fraction-positive of each neuron over a held-out set
 of $M$ inputs:
@@ -176,16 +178,44 @@ $$q_i = \frac{1}{M}\sum_{m=1}^{M} \mathbb{1}[\,z_i(x_m) > 0\,].$$
 
 Pick a tolerance $\varepsilon$ and classify:
 
-| Condition | Meaning | Action (phase 2) |
+| Condition | Meaning | Action (masked surgery) |
 | --- | --- | --- |
-| $q_i \ge 1-\varepsilon$ | consistently **positive** (ReLU ≈ identity) | replace ReLU with an identity **passthrough** → unit becomes linear |
-| $q_i \le \varepsilon$ | consistently **negative** (ReLU ≈ 0) | unit is **dead** → prune it |
-| otherwise | genuinely nonlinear | keep the ReLU |
+| $q_i \ge 1-\varepsilon$ | consistently **positive** (ReLU ≈ identity) | set mode to `IDENTITY` → passthrough, unit becomes linear |
+| $q_i \le \varepsilon$ | consistently **negative** (ReLU ≈ 0) | set mode to `ZERO` → unit is **dead** (outputs 0) |
+| otherwise | genuinely nonlinear | keep `RELU` |
 
-Once units are linearized, consecutive linear maps can be **folded**: for adjacent linear
-layers, $W_2(W_1 x + b_1) + b_2 = (W_2 W_1)x + (W_2 b_1 + b_2)$. Folding plus pruning yields
-a smaller, partially-linear network. The phase-2 deliverable is to perform this surgery and
-measure how much accuracy is retained.
+**Masked-activation surgery (what phase 1a does).** Rather than rewriting weights, we set a
+per-neuron **mode** on a `SelectiveReLU`: an always-negative neuron ($q_i \le \varepsilon$) is
+set to `ZERO` (its output is forced to 0, exactly as its ReLU already produced), and an
+always-positive neuron ($q_i \ge 1-\varepsilon$) is set to `IDENTITY` (passthrough, linearizing
+the unit). Genuinely nonlinear neurons keep `RELU`. The forward pass and weights are otherwise
+untouched, so this is a clean, reversible measurement of *how much* nonlinearity was
+unnecessary. **Linear folding** — collapsing $W_2(W_1 x + b_1) + b_2 = (W_2 W_1)x + (W_2 b_1 +
+b_2)$ across adjacent linearized layers — and structural width pruning are deferred to a later
+phase; phase 1a measures the accuracy-vs-k trade-off of masking alone.
+
+### Selection-set-only losslessness
+
+Masking a neuron is **exactly lossless only when its hard sign-entropy is truly zero** — i.e.
+$q_i$ is **exactly** 0 or 1 (using the strict $z > 0$ predicate) on the set it was measured on.
+A $q=0$ neuron set to `ZERO` is lossless even if some $z = 0$ in the batch (because
+$\mathrm{ReLU}(0) = 0$); a $q=1$ neuron set to `IDENTITY` requires **all** $z > 0$ strictly. For
+selected neurons with *interior* $q$ (chosen by how far down the ascending-entropy ranking we
+cut), masking changes the logits, and the **accuracy-vs-k** curve measures that loss by design.
+Crucially the guarantee is **on the selection set only**: held-out (test) inputs may push a
+"consistent" neuron across zero, which is exactly why we report the val-vs-test accuracy-vs-k
+gap.
+
+### Gradient safety: the loss clamps p
+
+The entropy's forward value is exactly 0 at $p \in \{0, 1\}$, but its derivative
+$\mathrm{d}H/\mathrm{d}p = \log\frac{1-p}{p}$ diverges there. As $\tau$ anneals low, the soft
+$p_i$ of a sign-consistent neuron saturates to *exactly* 0 or 1 in float32, so a naive
+`loss.backward()` would inject NaN — destroying the model precisely when it succeeds.
+Therefore the **loss** clamps $p$ into $[\varepsilon, 1-\varepsilon]$ before computing entropy
+(clamp's backward is 0 outside the range, so saturated neurons get a finite zero gradient).
+The `binary_entropy` function itself stays **unclamped** — the honest math — and is used by
+**analysis** on the hard $q$ under `no_grad`, where the endpoint gradient never arises.
 
 ## What we measure (phase 1)
 
@@ -216,22 +246,23 @@ measure how much accuracy is retained.
 Tracked work, roughly in order. (Once a GitHub remote exists, these become issues — see
 [contributing](../development/contributing.md).)
 
-- [x] **Phase 0 — scaffold.** Tooling, test harness, docs (this repo, now).
-- [ ] **Phase 1a — regularizer + analysis on a toy MLP** (MNIST/CIFAR). Implement
-  $\mathcal{L}_{\text{reg}}$, sweep $\lambda$, produce the trade-off curve and $q_i$
-  histograms. Models emit their own pre-activations (see
-  [architecture](../architecture/overview.md)).
-- [ ] **Phase 1b — small transformer (language modeling).** Apply the same regularizer to
-  the MLP/FFN blocks of a small transformer.
-- [ ] **Phase 2 — surgery.** Replace/prune/fold eliminable units and measure retained
-  accuracy.
+- [x] **Phase 0 — scaffold.** Tooling, test harness, docs (this repo).
+- [~] **Phase 1a — regularizer + analysis + masked surgery on a toy MLP** (MNIST/CIFAR).
+  *In progress.* $\mathcal{L}_{\text{reg}}$, τ-annealing, λ-sweep via wandb Sweeps, the
+  trade-off curve, $q_i$ histograms, and masked-activation surgery (accuracy-vs-k on val+test)
+  are implemented per the [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md).
+  Models emit their own pre-activations (see [architecture](../architecture/overview.md)).
+- [ ] **Phase 1b — small transformer (language modeling).** Apply the same regularizer to the
+  MLP/FFN blocks of a small transformer.
+- [ ] **Phase 2 — structural surgery.** Fold linearized layers and prune dead units; measure
+  retained accuracy. (Phase 1a already does the *masked* form.)
 
 ## Experiment log
 
 > Newest entries on top. Each entry: date, what was tried, config (λ, τ schedule, model,
 > data), result, and takeaway. Keep findings here so knowledge accumulates in one place.
 
-_No experiments run yet._
+_Entries land here as the MNIST and CIFAR runs (λ>0) complete — see milestone 9, Task 9.11._
 
 ```
 ### YYYY-MM-DD — <one-line title>
