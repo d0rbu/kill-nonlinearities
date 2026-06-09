@@ -262,7 +262,50 @@ Tracked work, roughly in order. (Once a GitHub remote exists, these become issue
 > Newest entries on top. Each entry: date, what was tried, config (λ, τ schedule, model,
 > data), result, and takeaway. Keep findings here so knowledge accumulates in one place.
 
-_Entries land here as the MNIST and CIFAR runs (λ>0) complete — see milestone 9, Task 9.11._
+### 2026-06-08 — MNIST λ>0 baseline (regularizer + masked surgery)
+- **Setup:** ReLUMLP (784→256→256→10, 512 hidden neurons) / MNIST / λ=0.05 / τ exponential
+  1.0→0.1 / Adam lr 1e-3 / 8 epochs / seed 0 / CPU. Config:
+  [`configs/mnist.json`](../../configs/mnist.json). Run offline with `mode="disabled"`:
+  `uv run python -m kill_nonlinearities.experiments.run --config configs/mnist.json`.
+- **Result:** val acc **0.9778**, test acc **0.9791** (k=0, the untouched model). The
+  regularizer drove the mean per-site sign-entropy down over training (final
+  $\mathcal{L}_{\text{reg}}=0.392$). Of the 512 neurons, **51 reached exact $q=0$** (all dead;
+  none hit $q=1$ at this λ) — the lossless-prefix marker — and **86 had sign-entropy < 0.05
+  nats**. Masking those 51 via `ZERO` is **bit-exactly lossless on the selection set**: the
+  acc-vs-k curve is flat (val 0.9778, test 0.9791) through k=51 and stays ≥ 0.977 through
+  k≈128, then degrades smoothly (k=205: val 0.974; k=256: val 0.9522; all-512-masked collapses
+  to ~0.30, chance-ish). The **entropy ranking dominates the random baseline** across the
+  mid-range (k=256: 0.9522 vs 0.8162 random; k=179: 0.9775 vs 0.9440), confirming low-entropy
+  neurons really are the cheap-to-remove ones. Val and test curves track within ~1% everywhere
+  (small generalization gap). Artifacts in `runs/mnist-lambda/`: `acc_vs_k.png`,
+  `entropy_map.png`, `mean_pre_dist.png`, `per_layer_entropy.png`, `soft_vs_hard.png`,
+  `loss_curves.png`, `activation.gif`, `qi_bimodality.gif` (one frame per checkpoint, 9 total).
+- **Takeaway:** at λ=0.05 about **10% of neurons (51/512) are exactly removable with zero
+  accuracy cost**, and ~25–40% can be masked for a few points of accuracy — the entropy
+  ranking is the right knob (it beats random masking by a wide margin mid-curve). At this λ the
+  pressure produced dead ($q=0$) units rather than passthrough ($q=1$) ones. Next: sweep λ to
+  push more neurons to the endpoints and grow the bimodal $q_i$ split, and run the deeper
+  CIFAR-10 MLP.
+
+### 2026-06-08 — CIFAR-10 λ>0 (regularizer + masked surgery) — *queued*
+- **Setup:** ReLUMLP (3072→256→256→10) / CIFAR-10 / λ=0.05 / τ exponential 1.0→0.1 / Adam
+  lr 1e-3 / 10 epochs / seed 0 / CPU. Config:
+  [`configs/cifar10.json`](../../configs/cifar10.json).
+- **Result:** *not yet run.* Reproduce it (downloads CIFAR-10 to `./data`, trains on CPU) with:
+  ```bash
+  uv run python -m kill_nonlinearities.experiments.run --config configs/cifar10.json
+  ```
+  For an online run with wandb tracking, set `"mode": "online"` in `configs/cifar10.json` and
+  `uv run wandb login` first; artifacts land under `runs/cifar10-lambda/` and stream to wandb.
+  To produce the λ trade-off curve, launch a wandb sweep over `{lr, epochs, batch_size, λ}`
+  from your own wandb account:
+  ```bash
+  uv run python -c "from kill_nonlinearities.experiments.sweep import launch_sweep; \
+  print(launch_sweep({'lr':[1e-3,3e-3],'epochs':[10,20],'batch_size':[64,128],'lam':[0.0,0.01,0.1]}, method='grid', count=12))"
+  ```
+- **Takeaway:** *pending the run.* CIFAR-10 on a flat MLP is a harder, lower-ceiling task than
+  MNIST, so expect fewer exactly-consistent neurons at the same λ; the headline comparison is
+  the acc-vs-k val/test gap against MNIST.
 
 ```
 ### YYYY-MM-DD — <one-line title>
