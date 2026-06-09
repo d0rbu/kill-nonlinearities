@@ -71,3 +71,25 @@ def test_pre_activations_match_manual_layer_by_layer_recompute() -> None:
     assert torch.equal(out.pre_activations[0], z0)
     assert torch.equal(out.pre_activations[1], z1)
     assert torch.equal(out.logits, expected_logits)
+
+
+def test_k0_all_relu_reproduces_plain_relu_logits_bit_for_bit() -> None:
+    """I1 in-model: all sites default RELU ⇒ logits equal a plain torch.relu recompute."""
+    torch.manual_seed(0)
+    config = ModelConfig(input_dim=8, hidden_dims=(5, 3), output_dim=4)
+    model = ReLUMLP(config)
+    model.eval()
+    # Every SelectiveReLU is at its default all-RELU mode (k=0 surgical state).
+    for act in model.activations:
+        assert torch.equal(act.mode, torch.zeros(act.num_features, dtype=torch.int64))
+
+    x = torch.randn(6, 8)
+    out = model(x)
+
+    # Plain-ReLU recompute through the SAME linears/head, using torch.relu directly.
+    h = x.flatten(1)
+    h = torch.relu(model.linears[0](h))
+    h = torch.relu(model.linears[1](h))
+    expected_logits = model.head(h)
+
+    assert torch.equal(out.logits, expected_logits)
