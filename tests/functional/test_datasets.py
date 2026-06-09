@@ -26,6 +26,7 @@ def _synthetic_config(
     val_fraction: float = 0.2,
     split_seed: int = 0,
     drop_last: bool = False,
+    num_workers: int = 0,
     seed: int = 0,
 ) -> ExperimentConfig:
     """A tiny, fully-synthetic ExperimentConfig (no network, no download)."""
@@ -39,7 +40,7 @@ def _synthetic_config(
             val_fraction=val_fraction,
             split_seed=split_seed,
             drop_last=drop_last,
-            num_workers=0,
+            num_workers=num_workers,
         ),
         probe=ProbeConfig(num_neurons=4, seed=0, batch_size=10),
     )
@@ -174,3 +175,37 @@ def test_make_dataloaders_unknown_dataset_raises() -> None:
     )
     with pytest.raises(ValueError, match="unknown dataset"):
         make_dataloaders(bad)
+
+
+def test_train_loader_has_no_worker_init_fn_when_single_process() -> None:
+    """With num_workers==0 the train loader uses no (or a no-op) worker_init_fn."""
+    train, _, _ = make_dataloaders(_synthetic_config(num_workers=0))
+    assert train.worker_init_fn is None
+
+
+def test_train_loader_seeds_workers_when_multiprocess() -> None:
+    """With num_workers>0 the train loader gets a seeded worker_init_fn (spec §8).
+
+    The callable must seed each worker deterministically from split_seed + id; we
+    invoke it directly and confirm two worker ids land on distinct, reproducible
+    torch seeds (no DataLoader iteration -> no worker processes spawned).
+    """
+    train, val, test = make_dataloaders(_synthetic_config(num_workers=2, split_seed=5))
+
+    init = train.worker_init_fn
+    assert init is not None
+    # Only the TRAIN loader is seeded; eval loaders stay shuffle-free and unseeded.
+    assert val.worker_init_fn is None
+    assert test.worker_init_fn is None
+
+    # Worker 0 and worker 1 get distinct deterministic seeds derived from base 5.
+    init(0)
+    draw_w0 = torch.randint(0, 2**31 - 1, (1,)).item()
+    init(1)
+    draw_w1 = torch.randint(0, 2**31 - 1, (1,)).item()
+    assert draw_w0 != draw_w1
+
+    # Re-seeding the same worker id reproduces the same draw (deterministic).
+    init(0)
+    draw_w0_again = torch.randint(0, 2**31 - 1, (1,)).item()
+    assert draw_w0 == draw_w0_again

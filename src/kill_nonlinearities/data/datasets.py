@@ -1,5 +1,10 @@
 """Dataset providers, deterministic dataloaders, and probe selection (spec §4.9)."""
 
+import functools
+import random
+from collections.abc import Callable
+
+import numpy as np
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
@@ -83,6 +88,25 @@ def _build_train_and_test(config: ExperimentConfig) -> tuple[Dataset, Dataset]:
     raise ValueError(f"unknown dataset {dataset!r}")
 
 
+def _seed_worker(worker_id: int, *, base_seed: int) -> None:
+    """Seed a DataLoader worker deterministically from ``base_seed + worker_id``.
+
+    Each worker process gets its own ``torch``/``numpy``/``random`` seeds so that
+    multi-worker train iteration stays reproducible across runs (spec §8). Bound
+    to a concrete ``base_seed`` via ``make_worker_init_fn`` before being handed to
+    the DataLoader.
+    """
+    seed = base_seed + worker_id
+    torch.manual_seed(seed)
+    np.random.seed(seed % (2**32))
+    random.seed(seed)
+
+
+def make_worker_init_fn(base_seed: int) -> Callable[[int], None]:
+    """Return a ``worker_init_fn`` that seeds each worker from ``base_seed`` (§4.9)."""
+    return functools.partial(_seed_worker, base_seed=base_seed)
+
+
 def make_dataloaders(
     config: ExperimentConfig,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
@@ -92,6 +116,8 @@ def make_dataloaders(
     ``torch.Generator(split_seed)``. train shuffles with a seeded generator and
     honors ``drop_last``; val/test use ``shuffle=False, drop_last=False`` and
     ``eval_batch_size`` so downstream analysis concatenates in a stable order.
+    When ``num_workers > 0`` the train loader gets a seeded ``worker_init_fn`` so
+    each worker is seeded deterministically from ``split_seed`` (spec §8).
     """
     train_full, test_dataset = _build_train_and_test(config)
 
@@ -107,6 +133,14 @@ def make_dataloaders(
     shuffle_gen = torch.Generator()
     shuffle_gen.manual_seed(config.data.split_seed)
 
+    # Seed each worker deterministically only when workers exist; with 0 workers
+    # loading runs in the main process and no worker_init_fn is needed (spec §8).
+    worker_init_fn = (
+        make_worker_init_fn(config.data.split_seed)
+        if config.data.num_workers > 0
+        else None
+    )
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.data.batch_size,
@@ -114,6 +148,7 @@ def make_dataloaders(
         drop_last=config.data.drop_last,
         num_workers=config.data.num_workers,
         generator=shuffle_gen,
+        worker_init_fn=worker_init_fn,
     )
     val_loader = DataLoader(
         val_dataset,
