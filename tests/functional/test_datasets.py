@@ -125,3 +125,39 @@ def test_synthetic_split_changes_with_split_seed() -> None:
         make_dataloaders(_synthetic_config(split_seed=1))[1].dataset
     )
     assert not torch.equal(val_seed0[0], val_seed1[0])
+
+
+def _concat_loader_inputs(loader: object) -> Tensor:
+    """Concatenate all batch inputs from a loader in iteration order."""
+    return torch.cat([x for x, _ in loader])  # ty: ignore[not-iterable]
+
+
+def test_val_iteration_order_is_stable() -> None:
+    """val iterates in a fixed order across repeated passes (shuffle=False)."""
+    _, val, _ = make_dataloaders(_synthetic_config())
+    first = _concat_loader_inputs(val)
+    second = _concat_loader_inputs(val)
+    assert torch.equal(first, second)
+
+
+def test_test_iteration_order_is_stable() -> None:
+    """test iterates in a fixed order across repeated passes (shuffle=False)."""
+    _, _, test = make_dataloaders(_synthetic_config())
+    first = _concat_loader_inputs(test)
+    second = _concat_loader_inputs(test)
+    assert torch.equal(first, second)
+
+
+def test_test_order_stable_across_make_dataloaders_calls() -> None:
+    """test order is identical across independent make_dataloaders calls."""
+    _, _, test_a = make_dataloaders(_synthetic_config())
+    _, _, test_b = make_dataloaders(_synthetic_config())
+    assert torch.equal(_concat_loader_inputs(test_a), _concat_loader_inputs(test_b))
+
+
+def test_val_keeps_all_samples_drop_last_false() -> None:
+    """val never drops a partial final batch (drop_last=False)."""
+    config = _synthetic_config(val_fraction=0.2, eval_batch_size=7)
+    _, val, _ = make_dataloaders(config)
+    n_seen = sum(x.shape[0] for x, _ in val)
+    assert n_seen == len(val.dataset)  # ty: ignore[invalid-argument-type]
