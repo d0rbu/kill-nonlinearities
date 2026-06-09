@@ -49,3 +49,25 @@ def test_activations_are_selective_relu_per_hidden_site() -> None:
     assert model.activations[0].num_features == 5
     assert model.activations[1].num_features == 3
     assert int(model.activations[0].mode[0]) == int(ActivationMode.RELU)
+
+
+def test_pre_activations_match_manual_layer_by_layer_recompute() -> None:
+    """pre_activations[i] equals the literal input to activations[i] (bit-for-bit)."""
+    torch.manual_seed(0)
+    config = ModelConfig(input_dim=8, hidden_dims=(5, 3), output_dim=4)
+    model = ReLUMLP(config)
+    model.eval()
+    x = torch.randn(6, 8)
+    out = model(x)
+
+    # Manual recompute using the model's own parameters and SelectiveReLU sites.
+    h = x.flatten(1)
+    z0 = model.linears[0](h)
+    a0 = model.activations[0](z0)
+    z1 = model.linears[1](a0)
+    a1 = model.activations[1](z1)
+    expected_logits = model.head(a1)
+
+    assert torch.equal(out.pre_activations[0], z0)
+    assert torch.equal(out.pre_activations[1], z1)
+    assert torch.equal(out.logits, expected_logits)
