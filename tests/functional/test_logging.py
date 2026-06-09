@@ -46,3 +46,11 @@ def test_in_memory_logger_records_config_and_finish() -> None:
     assert logger.finished is False
     logger.finish()
     assert logger.finished is True
+
+
+def test_importing_logging_module_does_not_import_wandb() -> None:
+    import sys
+
+    # WandbLogger must lazy-import wandb; merely importing the module (already
+    # done at the top of this file) must not pull wandb into sys.modules.
+    assert "wandb" not in sys.modules

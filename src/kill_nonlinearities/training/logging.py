@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from kill_nonlinearities.config import WandbConfig
+
 
 @runtime_checkable
 class Logger(Protocol):
@@ -67,3 +69,67 @@ class InMemoryLogger:
 
     def finish(self) -> None:
         self.finished = True
+
+
+class WandbLogger:
+    """Logger that streams to Weights & Biases.
+
+    ``wandb`` is imported lazily inside the methods so importing this module
+    never requires wandb. When ``run is None`` a new run is started via
+    ``wandb.init``; otherwise this logger **attaches** to the already-active
+    ``run`` (no second ``wandb.init``). Not unit-tested (spec §7).
+    """
+
+    def __init__(self, wandb_config: WandbConfig, run: object | None = None):
+        self._config = wandb_config
+        self._run = run
+
+    def _ensure_run(self) -> object:  # pragma: no cover - network glue (spec §7)
+        if self._run is None:
+            import wandb
+
+            self._run = wandb.init(
+                project=self._config.project,
+                entity=self._config.entity,
+                mode=self._config.mode,  # ty: ignore[invalid-argument-type]
+                group=self._config.group,
+                tags=list(self._config.tags),
+            )
+        return self._run
+
+    def log_scalars(
+        self, values: Mapping[str, float], step: int
+    ) -> None:  # pragma: no cover - network glue (spec §7)
+        self._ensure_run()
+        import wandb
+
+        wandb.log(dict(values), step=step)
+
+    def log_image(
+        self, name: str, path: Path, step: int | None = None
+    ) -> None:  # pragma: no cover - network glue (spec §7)
+        self._ensure_run()
+        import wandb
+
+        wandb.log({name: wandb.Image(str(path))}, step=step)
+
+    def log_video(
+        self, name: str, path: Path, step: int | None = None
+    ) -> None:  # pragma: no cover - network glue (spec §7)
+        self._ensure_run()
+        import wandb
+
+        wandb.log({name: wandb.Video(str(path))}, step=step)
+
+    def log_config(
+        self, config: Mapping[str, object]
+    ) -> None:  # pragma: no cover - network glue (spec §7)
+        run = self._ensure_run()
+        run.config.update(dict(config))  # ty: ignore[unresolved-attribute]
+
+    def finish(self) -> None:  # pragma: no cover - network glue (spec §7)
+        if self._run is not None:
+            import wandb
+
+            wandb.finish()
+            self._run = None
