@@ -56,3 +56,34 @@ def config_from_wandb(wandb_config: Mapping[str, object]) -> ExperimentConfig:
         data=replace(BASE_CONFIG.data, batch_size=wandb_config["batch_size"]),
         reg=replace(BASE_CONFIG.reg, lam=wandb_config["lam"]),
     )
+
+
+def sweep_entry() -> None:  # pragma: no cover - wandb network glue ([R3], §7)
+    """wandb.agent target: init the run, translate its config, run the experiment ([R3]).
+
+    `run` is the already-active wandb run; passing it to `WandbLogger` makes the logger
+    ATTACH rather than init a second time, so there is exactly one `wandb.init()` per run.
+    """
+    import wandb
+
+    from kill_nonlinearities.experiments.run import run_experiment
+    from kill_nonlinearities.training.logging import WandbLogger
+
+    wandb.init()
+    config = config_from_wandb(dict(wandb.config))
+    run_experiment(config, logger=WandbLogger(config.wandb, run=wandb.run))
+
+
+def launch_sweep(
+    grids: Mapping[str, list[object]],
+    method: str,
+    count: int,
+) -> str:  # pragma: no cover - wandb network glue (§7)
+    """Create a wandb sweep over `grids` and run `count` agent trials; return the sweep id."""
+    import wandb
+
+    sweep_id = wandb.sweep(
+        build_sweep_config(grids, method), project=BASE_CONFIG.wandb.project
+    )
+    wandb.agent(sweep_id, function=sweep_entry, count=count)
+    return sweep_id
