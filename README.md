@@ -18,8 +18,11 @@ entropy `H(pᵢ)`** to drive each neuron toward consistently-positive or consist
 
 ## Status
 
-🚧 **Scaffold only.** The tooling, tests harness, and documentation are set up; no research
-code has been implemented yet. See the [roadmap](docs/research/README.md#roadmap).
+🚧 **Phase 1a in progress.** The regularizer, models, training, data, analysis, and
+**masked-activation surgery** are implemented per the
+[phase-1a spec](docs/specs/2026-06-08-phase1a-regularizer-and-surgery-design.md). Real
+MNIST/CIFAR runs (λ>0) and their experiment-log entries are landing. See the
+[roadmap](docs/research/README.md#roadmap).
 
 ## Quickstart
 
@@ -50,9 +53,10 @@ kill-nonlinearities/
 ├── pyproject.toml           # project + uv/ruff/ty/pytest/coverage config
 ├── docs/                    # hierarchical documentation (start at docs/README.md)
 │   ├── research/            # the method, the math, and the experiment log
+│   ├── specs/               # dated design specs (phase-1a design of record)
 │   ├── development/         # setup, tooling, testing, contributing
-│   └── architecture/        # planned code structure
-├── src/kill_nonlinearities/ # the package (currently a scaffold)
+│   └── architecture/        # realized code structure
+├── src/kill_nonlinearities/ # the package (models, regularization, training, data, analysis, surgery, viz, experiments)
 └── tests/                   # the test suite
 ```
 
@@ -61,7 +65,8 @@ kill-nonlinearities/
 - 📚 [`docs/README.md`](docs/README.md) — documentation hub
 - 🔬 [`docs/research/README.md`](docs/research/README.md) — the research idea, method, and log
 - 🛠️ [`docs/development/`](docs/development/README.md) — environment, tooling, testing, contributing
-- 🏗️ [`docs/architecture/`](docs/architecture/README.md) — planned code structure
+- 🏗️ [`docs/architecture/`](docs/architecture/README.md) — realized code structure
+- 📐 [`docs/specs/`](docs/specs/2026-06-08-phase1a-regularizer-and-surgery-design.md) — the phase-1a design spec
 - 🤖 [`AGENTS.md`](AGENTS.md) — conventions for humans and coding agents
 
 ## Tooling
@@ -70,4 +75,7 @@ kill-nonlinearities/
 (lint + format) · [`ty`](https://docs.astral.sh/ty/) (types) ·
 [`pytest`](https://docs.pytest.org/) + [`hypothesis`](https://hypothesis.readthedocs.io/)
 + [`pytest-cov`](https://pytest-cov.readthedocs.io/) (tests) ·
-[`pre-commit`](https://pre-commit.com/) (hooks) · [`PyTorch`](https://pytorch.org/).
+[`pre-commit`](https://pre-commit.com/) (hooks) · [`PyTorch`](https://pytorch.org/) +
+[`torchvision`](https://pytorch.org/vision/) (data) · [`wandb`](https://wandb.ai/) (tracking +
+sweeps) · [`matplotlib`](https://matplotlib.org/) + [`imageio`](https://imageio.readthedocs.io/)
++ [`pillow`](https://python-pillow.org/) (figures + GIFs).
