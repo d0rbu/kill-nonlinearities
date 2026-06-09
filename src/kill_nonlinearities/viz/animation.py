@@ -50,15 +50,17 @@ def render_activation_gif(frames: Sequence[FrameStats], path: Path) -> Path:
             squeeze=False,
             figsize=(3 * len(neuron_keys), 3),
         )
-        for ax, key in zip(axes[0], neuron_keys, strict=True):
-            values = frame.probe_activations[key].detach().cpu().tolist()
-            ax.hist(values, bins=20)
-            ax.set_title(f"{key[0]}[{key[1]}]")
-            ax.set_xlabel("pre-activation")
-        fig.suptitle(f"step {frame.step}")
-        fig.tight_layout()
-        images.append(_figure_to_rgb(fig))
-        plt.close(fig)
+        try:
+            for ax, key in zip(axes[0], neuron_keys, strict=True):
+                values = frame.probe_activations[key].detach().cpu().tolist()
+                ax.hist(values, bins=20)
+                ax.set_title(f"{key[0]}[{key[1]}]")
+                ax.set_xlabel("pre-activation")
+            fig.suptitle(f"step {frame.step}")
+            fig.tight_layout()
+            images.append(_figure_to_rgb(fig))
+        finally:
+            plt.close(fig)
     iio.imwrite(path, np.stack(images), plugin="pillow", extension=".gif")
     return path
 
@@ -76,13 +78,15 @@ def render_qi_bimodality_gif(frames: Sequence[FrameStats], path: Path) -> Path:
         for q in frame.q_by_site.values():
             pooled.extend(q.detach().cpu().tolist())
         fig, ax = plt.subplots()
-        ax.hist(pooled, bins=20, range=(0.0, 1.0))
-        ax.set_xlim(0.0, 1.0)
-        ax.set_xlabel("hard q_i")
-        ax.set_ylabel("count")
-        ax.set_title(f"q_i distribution — step {frame.step}")
-        fig.tight_layout()
-        images.append(_figure_to_rgb(fig))
-        plt.close(fig)
+        try:
+            ax.hist(pooled, bins=20, range=(0.0, 1.0))
+            ax.set_xlim(0.0, 1.0)
+            ax.set_xlabel("hard q_i")
+            ax.set_ylabel("count")
+            ax.set_title(f"q_i distribution — step {frame.step}")
+            fig.tight_layout()
+            images.append(_figure_to_rgb(fig))
+        finally:
+            plt.close(fig)
     iio.imwrite(path, np.stack(images), plugin="pillow", extension=".gif")
     return path

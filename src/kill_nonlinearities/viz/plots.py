@@ -44,8 +44,10 @@ def plot_loss_curves(history: Sequence[StepMetrics], path: Path) -> Path:
     ax.set_ylabel("loss")
     ax.set_title("Training losses")
     ax.legend()
-    fig.savefig(path)
-    plt.close(fig)
+    try:
+        fig.savefig(path)
+    finally:
+        plt.close(fig)
     return path
 
 
@@ -72,8 +74,10 @@ def plot_mean_pre_dist(stats: Sequence[NeuronStats], path: Path) -> Path:
         ax.set_xlabel("mean pre-activation")
         ax.set_ylabel("count")
     fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
+    try:
+        fig.savefig(path)
+    finally:
+        plt.close(fig)
     return path
 
 
@@ -92,8 +96,10 @@ def plot_entropy_map(stats: Sequence[NeuronStats], path: Path) -> Path:
         ax.set_xlabel("neuron rank")
         ax.set_ylabel("H(q) [nats]")
     fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
+    try:
+        fig.savefig(path)
+    finally:
+        plt.close(fig)
     return path
 
 
@@ -110,8 +116,10 @@ def plot_per_layer_entropy(stats: Sequence[NeuronStats], path: Path) -> Path:
     ax.set_xlabel("layer")
     ax.set_ylabel("mean H(q) [nats]")
     ax.set_title("Per-layer mean sign-entropy")
-    fig.savefig(path)
-    plt.close(fig)
+    try:
+        fig.savefig(path)
+    finally:
+        plt.close(fig)
     return path
 
 
@@ -174,8 +182,10 @@ def plot_acc_vs_k(
     file ``path`` and returns it after saving.
     """
     fig, _ = _build_acc_vs_k_axes(k_points, random_k_points, total, lossless_prefix)
-    fig.savefig(path)
-    plt.close(fig)
+    try:
+        fig.savefig(path)
+    finally:
+        plt.close(fig)
     return path
 
 
@@ -194,6 +204,8 @@ def plot_soft_vs_hard(soft_p: Tensor, hard_q: Tensor, path: Path) -> Path:
     ax.set_ylabel("soft p_i  (sigmoid(z / tau) mean)")
     ax.set_title("Soft vs hard fraction-positive")
     ax.legend()
-    fig.savefig(path)
-    plt.close(fig)
+    try:
+        fig.savefig(path)
+    finally:
+        plt.close(fig)
     return path
