@@ -413,7 +413,8 @@ also sets `MPLBACKEND=Agg` `[R10]`.
 - `sign_consistency_loss`: scalar ≥ 0; equals hand-computed value on a 2-site toy input with **interior** τ≈1,
   `|z|/τ≲5` `[R-nit]`; single-site == that site's mean entropy; gradient flows to all pre-activations;
   batch- **and** neuron-permutation invariance via `assert_close` (two separate cases) `[R13]`; the per-neuron
-  entropy **vector** is bit-exact under the inverse neuron permutation (`torch.equal`) `[R13]`.
+  entropy **vector** is invariant under the inverse neuron permutation (`assert_close` — the
+  reduction order over a column-permuted tensor is not bit-stable) `[R13]`.
 - `SelectiveReLU`: all-`RELU` ≡ `torch.relu` (`torch.equal`) **I1**; `ZERO`→zeros; `IDENTITY`→`z` exact; mixed
   per-neuron; broadcast `[N]` over `[B,N]`; `set_modes` validation (shape/dtype/range) raises; **gradient routing
   by exact analytic assertion** (`z.grad==0` ZERO, `==1` IDENTITY, `==(z>0).float()` RELU) `[R12]`; **state_dict
