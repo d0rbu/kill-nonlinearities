@@ -4,6 +4,7 @@ from pathlib import Path
 
 import matplotlib
 
+from kill_nonlinearities.analysis.statistics import NeuronStats
 from kill_nonlinearities.training.trainer import StepMetrics
 from kill_nonlinearities.viz import plots
 
@@ -33,6 +34,25 @@ def test_plot_loss_curves_writes_nonempty_file(tmp_path: Path) -> None:
     """plot_loss_curves writes a non-empty figure file and returns its Path (spec §5)."""
     out = tmp_path / "loss_curves.png"
     result = plots.plot_loss_curves(_toy_history(), out)
+
+    assert result == out
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+def _toy_stats() -> list[NeuronStats]:
+    return [
+        NeuronStats(site="relu0", index=0, q=0.0, entropy=0.0, mean_pre=-1.0),
+        NeuronStats(site="relu0", index=1, q=1.0, entropy=0.0, mean_pre=2.0),
+        NeuronStats(site="relu1", index=0, q=0.5, entropy=0.6931, mean_pre=0.1),
+        NeuronStats(site="relu1", index=1, q=0.3, entropy=0.6109, mean_pre=-0.2),
+    ]
+
+
+def test_plot_mean_pre_dist_writes_nonempty_file(tmp_path: Path) -> None:
+    """plot_mean_pre_dist writes one panel per layer to a non-empty file (spec §5)."""
+    out = tmp_path / "mean_pre_dist.png"
+    result = plots.plot_mean_pre_dist(_toy_stats(), out)
 
     assert result == out
     assert out.exists()
