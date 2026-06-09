@@ -122,9 +122,20 @@ def run_experiment(
     ranked = rank_by_entropy(stats)
     ranked_random = rank_random(stats, config.train.seed)
     k_grid = make_k_grid(total, config.surgery.num_k)
-    k_points = k_sweep(model, ranked, k_grid, val_loader, test_loader, device)
+    tie_break = config.surgery.tie_break
+    k_points = k_sweep(
+        model, ranked, k_grid, val_loader, test_loader, device, tie_break=tie_break
+    )
     random_k_points = (
-        k_sweep(model, ranked_random, k_grid, val_loader, test_loader, device)
+        k_sweep(
+            model,
+            ranked_random,
+            k_grid,
+            val_loader,
+            test_loader,
+            device,
+            tie_break=tie_break,
+        )
         if config.surgery.random_baseline
         else []
     )

@@ -50,12 +50,14 @@ def k_sweep(
     val_loader: DataLoader,
     test_loader: DataLoader,
     device: str,
+    tie_break: str = "identity",
 ) -> list[KPoint]:
     """Accuracy-vs-k on val and test (spec §4.11, [R5][R21]).
 
     Works on a single ``copy.deepcopy(model)``; the canonical ``model`` is never
     mutated. ``assign_modes`` receives the true per-site widths so unselected
-    neurons stay ``RELU``.
+    neurons stay ``RELU``. ``tie_break`` (``"identity"`` or ``"zero"``) decides
+    how exactly-balanced (q==0.5) selected neurons are converted.
     """
     work = copy.deepcopy(model)
     widths = {
@@ -64,9 +66,7 @@ def k_sweep(
     }
     points: list[KPoint] = []
     for k in k_grid:
-        modes = assign_modes(
-            select_topk(ranked, k), tie_break="identity", widths=widths
-        )
+        modes = assign_modes(select_topk(ranked, k), tie_break=tie_break, widths=widths)
         apply_modes(work, modes)
         points.append(
             KPoint(

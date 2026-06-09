@@ -3,8 +3,13 @@
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from kill_nonlinearities.analysis.selection import make_k_grid, rank_by_entropy
+from kill_nonlinearities.analysis.selection import (
+    assign_modes,
+    make_k_grid,
+    rank_by_entropy,
+)
 from kill_nonlinearities.analysis.statistics import (
+    NeuronStats,
     collect_pre_activations,
     neuron_stats,
 )
@@ -65,6 +70,67 @@ def test_k_sweep_returns_point_per_grid_value() -> None:
     assert [p.k for p in points] == grid
     assert all(isinstance(p, KPoint) for p in points)
     assert all(0.0 <= p.val_acc <= 1.0 and 0.0 <= p.test_acc <= 1.0 for p in points)
+
+
+def test_assign_modes_tie_break_zero_vs_identity_on_balanced_neuron() -> None:
+    """A constructed q==0.5 neuron is ZERO under tie_break='zero', IDENTITY otherwise."""
+    balanced = NeuronStats(site="relu0", index=0, q=0.5, entropy=1.0, mean_pre=0.0)
+    widths = {"relu0": 1}
+
+    zero_modes = assign_modes([balanced], tie_break="zero", widths=widths)
+    identity_modes = assign_modes([balanced], tie_break="identity", widths=widths)
+
+    assert int(zero_modes["relu0"][0]) == int(ActivationMode.ZERO)
+    assert int(identity_modes["relu0"][0]) == int(ActivationMode.IDENTITY)
+
+
+def test_k_sweep_threads_tie_break_changing_accuracy() -> None:
+    """k_sweep forwards tie_break end-to-end: ZERO vs IDENTITY change val accuracy.
+
+    The lone hidden neuron is positive on the first selection sample and negative
+    on the second (q==0.5, the only neuron, selected at k>=1). The head and labels
+    are rigged so the negative-input sample is classified CORRECTLY only when the
+    tie neuron passes its (negative) pre-activation through (IDENTITY) and
+    INCORRECTLY when it is zeroed (ZERO). So k_sweep's k=1 val_acc must differ
+    between tie_break='identity' and tie_break='zero' — proving the parameter is
+    threaded, not hardcoded.
+    """
+    model = ReLUMLP(ModelConfig(input_dim=1, hidden_dims=(1,), output_dim=2))
+    with torch.no_grad():
+        # Hidden: z = x. x=+1 -> z>0; x=-1 -> z<0 -> q==0.5 over the two rows.
+        model.linears[0].weight.copy_(torch.tensor([[1.0]]))
+        model.linears[0].bias.zero_()
+        # Head maps the single hidden value h to two logits [class0=0, class1=h].
+        # IDENTITY: x=-1 -> h=-1 -> logit1=-1<0 -> predicts class0.
+        # ZERO:     x=-1 -> h= 0 -> logit1= 0 == logit0 -> argmax ties to class0.
+        # To make the modes observably differ we instead read class1 = -h so that
+        # IDENTITY x=-1 -> h=-1 -> logit1=+1 -> class1, ZERO -> 0 -> class0.
+        model.head.weight.copy_(torch.tensor([[0.0], [-1.0]]))
+        model.head.bias.zero_()
+
+    xs = torch.tensor([[1.0], [-1.0]])
+    # Label the negative-input row class1 so only IDENTITY classifies it right.
+    labels = torch.tensor([0, 1], dtype=torch.int64)
+    loader = DataLoader(TensorDataset(xs, labels), batch_size=2, shuffle=False)
+
+    pre = collect_pre_activations(model, loader, device="cpu")
+    stats = neuron_stats(pre)
+    assert stats[0].q == 0.5  # the lone neuron is exactly balanced
+    ranked = rank_by_entropy(stats)
+
+    identity_pts = k_sweep(
+        model, ranked, [1], loader, loader, device="cpu", tie_break="identity"
+    )
+    zero_pts = k_sweep(
+        model, ranked, [1], loader, loader, device="cpu", tie_break="zero"
+    )
+
+    # IDENTITY classifies the x=-1 row correctly (class1); ZERO does not.
+    assert identity_pts[0].val_acc > zero_pts[0].val_acc
+    # The canonical model is never mutated by k_sweep (all-RELU preserved).
+    assert torch.equal(
+        model.activations[0].mode, torch.zeros_like(model.activations[0].mode)
+    )
 
 
 def test_k_sweep_does_not_mutate_canonical_model() -> None:
