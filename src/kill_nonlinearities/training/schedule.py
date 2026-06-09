@@ -41,3 +41,21 @@ class TemperatureSchedule:
             return self.tau_start + (self.tau_end - self.tau_start) * fraction
         # exponential == geometric interpolation between the endpoints.
         return self.tau_start * (self.tau_end / self.tau_start) ** fraction
+
+
+def checkpoint_steps(
+    total_steps: int, steps_per_epoch: int, every_epochs: int
+) -> list[int]:
+    """Return the sorted, de-duplicated set of steps at which to checkpoint.
+
+    Always includes step ``0`` and the final step ``total_steps - 1``, plus
+    every multiple of ``every_epochs * steps_per_epoch`` that falls inside
+    ``[0, total_steps)``.
+    """
+    if total_steps <= 0:
+        return []
+    stride = every_epochs * steps_per_epoch
+    steps = {0, total_steps - 1}
+    if stride > 0:
+        steps.update(range(0, total_steps, stride))
+    return sorted(steps)
