@@ -7,6 +7,7 @@ import json
 import math
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -172,15 +173,61 @@ def test_run_logs_val_acc_sweep_metric(
 ) -> None:
     """run_experiment logs the 'val/acc' metric the sweep config maximizes (§4.13)."""
     logger = InMemoryLogger()
-    run_experiment(synthetic_config, logger=logger)
+    result = run_experiment(synthetic_config, logger=logger)
 
     logged_keys = {k for _, values in logger.scalars for k in values}
     assert "val/acc" in logged_keys
-    val_acc_values = [
-        values["val/acc"] for _, values in logger.scalars if "val/acc" in values
+    val_acc_entries = [
+        (step, values["val/acc"])
+        for step, values in logger.scalars
+        if "val/acc" in values
     ]
-    assert len(val_acc_values) == 1
-    assert 0.0 <= val_acc_values[0] <= 1.0
+    assert len(val_acc_entries) == 1
+    val_acc_step, val_acc_value = val_acc_entries[0]
+    assert 0.0 <= val_acc_value <= 1.0
+    # val/acc is recorded at the final training step (the step a real WandbLogger
+    # needs so the sweep metric is not dropped as non-monotonic; capstone fix).
+    final_step = result.train_result.history[-1].step
+    assert val_acc_step == final_step
+
+
+def test_run_logs_val_acc_before_any_artifact(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """val/acc is logged BEFORE any image/video so its explicit step is monotonic.
+
+    Artifacts log with step=None (auto-advancing wandb's step); logging val/acc at
+    an explicit final step AFTER them would be non-monotonic and dropped on the
+    real WandbLogger. A recording logger captures the global call order to pin
+    that the val/acc scalar precedes every artifact log (capstone fix).
+    """
+
+    class OrderingLogger(InMemoryLogger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: list[str] = []
+
+        def log_scalars(self, values: Mapping[str, float], step: int) -> None:
+            if "val/acc" in values:
+                self.events.append("val/acc")
+            super().log_scalars(values, step)
+
+        def log_image(self, name: str, path: Path, step: int | None = None) -> None:
+            self.events.append(f"image:{name}")
+            super().log_image(name, path, step)
+
+        def log_video(self, name: str, path: Path, step: int | None = None) -> None:
+            self.events.append(f"video:{name}")
+            super().log_video(name, path, step)
+
+    logger = OrderingLogger()
+    run_experiment(synthetic_config, logger=logger)
+
+    assert "val/acc" in logger.events
+    artifact_events = [e for e in logger.events if e.startswith(("image:", "video:"))]
+    assert artifact_events, "expected at least one artifact log"
+    # val/acc precedes the first artifact log.
+    assert logger.events.index("val/acc") < logger.events.index(artifact_events[0])
 
 
 def test_all_artifact_files_exist_and_are_non_empty(

@@ -166,7 +166,16 @@ def run_experiment(
         device,
     )
 
-    # 8. Render + log all artifacts (each renderer takes a FULL FILE path).
+    # 8. Log the sweep metric FIRST, at the final training step, under the exact
+    # key the sweep config maximizes (§4.13). Artifacts below log with step=None
+    # (auto-advancing wandb's step counter), so logging val/acc at step=final_step
+    # AFTER them would be non-monotonic and silently dropped on the real
+    # WandbLogger path (capstone fix). Log it before any artifact.
+    final_val_acc = evaluate_accuracy(model, val_loader, device)
+    final_step = train_result.history[-1].step if train_result.history else 0
+    logger.log_scalars({"val/acc": float(final_val_acc)}, step=final_step)
+
+    # 9. Render + log all artifacts (each renderer takes a FULL FILE path).
     lossless_prefix = sum(1 for s in stats if s.q in (0.0, 1.0))
     artifact_paths: dict[str, Path] = {
         "loss_curves": plot_loss_curves(
@@ -196,10 +205,6 @@ def run_experiment(
         else:
             logger.log_image(key, path)
 
-    # Log the sweep metric under the exact key the sweep config maximizes (§4.13).
-    final_val_acc = evaluate_accuracy(model, val_loader, device)
-    final_step = train_result.history[-1].step if train_result.history else 0
-    logger.log_scalars({"val/acc": float(final_val_acc)}, step=final_step)
     logger.finish()
 
     return ExperimentResult(
