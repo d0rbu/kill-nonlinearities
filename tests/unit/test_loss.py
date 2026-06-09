@@ -85,3 +85,45 @@ def test_sign_consistency_loss_gradient_flows_to_all_pre_activations() -> None:
         assert site.grad is not None
         assert torch.all(torch.isfinite(site.grad))
         assert torch.any(site.grad != 0.0)
+
+
+def test_sign_consistency_loss_invariant_to_batch_permutation() -> None:
+    """Permuting rows (batch) leaves the scalar loss unchanged (assert_close, [R13])."""
+    torch.manual_seed(1)
+    z = torch.randn(10, 4)
+    perm = torch.randperm(10)
+    base = sign_consistency_loss([z], tau=1.0, eps=1e-6)
+    permuted = sign_consistency_loss([z[perm]], tau=1.0, eps=1e-6)
+    torch.testing.assert_close(base, permuted)
+
+
+def test_sign_consistency_loss_invariant_to_neuron_permutation() -> None:
+    """Permuting columns (neurons) leaves the scalar loss unchanged (assert_close, [R13])."""
+    torch.manual_seed(2)
+    z = torch.randn(10, 4)
+    perm = torch.randperm(4)
+    base = sign_consistency_loss([z], tau=1.0, eps=1e-6)
+    permuted = sign_consistency_loss([z[:, perm]], tau=1.0, eps=1e-6)
+    torch.testing.assert_close(base, permuted)
+
+
+def test_per_neuron_entropy_vector_bit_exact_under_inverse_neuron_perm() -> None:
+    """The per-neuron entropy vector is invariant under the inverse perm (assert_close, [R13])."""
+    torch.manual_seed(3)
+    tau = 1.0
+    eps = 1e-6
+    z = torch.randn(10, 5)
+    perm = torch.randperm(5)
+    inv = torch.argsort(perm)
+
+    def per_neuron_entropy(zz: torch.Tensor) -> torch.Tensor:
+        p = batch_fraction_positive(zz, tau).clamp(eps, 1.0 - eps)
+        return binary_entropy(p)
+
+    base_vec = per_neuron_entropy(z)
+    permuted_vec = per_neuron_entropy(z[:, perm])
+    # ``mean(0)`` over a column-permuted (non-contiguous) tensor is NOT bit-stable:
+    # the vectorized reduction accumulates in a different order, yielding ~1-ULP
+    # per-column differences. Per §0 (and this milestone's stated convention),
+    # permutation invariance is asserted via ``assert_close``, not ``torch.equal``.
+    torch.testing.assert_close(permuted_vec[inv], base_vec)
