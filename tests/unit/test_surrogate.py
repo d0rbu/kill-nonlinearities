@@ -55,3 +55,9 @@ def test_soft_sign_raises_for_non_positive_tau() -> None:
         soft_sign(z, 0.0)
     with pytest.raises(ValueError, match="tau"):
         soft_sign(z, -1.0)
+
+
+def test_soft_sign_gradcheck_float64_interior() -> None:
+    """gradcheck passes on interior z in float64 (spec §6 I3, §7)."""
+    z = torch.linspace(-3.0, 3.0, 7, dtype=torch.float64, requires_grad=True)
+    assert torch.autograd.gradcheck(lambda zz: soft_sign(zz, 0.7), (z,))
