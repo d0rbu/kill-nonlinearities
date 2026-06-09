@@ -97,7 +97,7 @@ def test_config_from_wandb_unknown_key_raises() -> None:
     """An unrecognized flat key raises KeyError (no silent drop) ([R9])."""
     mapping = {"lr": 1e-2, "epochs": 5, "batch_size": 64, "lam": 0.1, "bogus": 1}
 
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match=r"unknown"):
         config_from_wandb(mapping)
 
 
@@ -105,5 +105,21 @@ def test_config_from_wandb_missing_swept_key_raises() -> None:
     """A missing swept key (here: lam) raises ([R9])."""
     mapping = {"lr": 1e-2, "epochs": 5, "batch_size": 64}
 
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match=r"missing"):
+        config_from_wandb(mapping)
+
+
+def test_config_from_wandb_non_numeric_lr_raises() -> None:
+    """A non-numeric `lr` is coerced at the boundary and raises ValueError ([R9])."""
+    mapping = {"lr": "oops", "epochs": 5, "batch_size": 64, "lam": 0.1}
+
+    with pytest.raises(ValueError):
+        config_from_wandb(mapping)
+
+
+def test_config_from_wandb_non_numeric_batch_size_raises() -> None:
+    """A clearly-invalid `batch_size` is coerced at the boundary and raises ValueError ([R9])."""
+    mapping = {"lr": 1e-2, "epochs": 5, "batch_size": "abc", "lam": 0.1}
+
+    with pytest.raises(ValueError):
         config_from_wandb(mapping)

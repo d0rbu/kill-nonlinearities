@@ -6,8 +6,12 @@ module (e.g. to use `build_sweep_config` / `config_from_wandb`) never pulls in w
 
 from collections.abc import Mapping
 from dataclasses import replace
+from typing import cast
 
 from kill_nonlinearities.config import ExperimentConfig
+
+# wandb sweep values are JSON scalars; this is the set we coerce to int/float at the boundary.
+_Scalar = str | int | float | bool
 
 # The documented BASE default config: every field a sweep does NOT vary is taken from here.
 # The swept fields (lr, epochs, batch_size, lam) are overridden per run by `config_from_wandb`.
@@ -39,7 +43,9 @@ def config_from_wandb(wandb_config: Mapping[str, object]) -> ExperimentConfig:
     Flat → nested map: `lr`→`OptimConfig.lr`, `epochs`→`TrainConfig.epochs`,
     `batch_size`→`DataConfig.batch_size`, `lam`→`RegConfig.lam`. All other fields (incl.
     `seed`) come from `BASE_CONFIG`. UNKNOWN keys raise `KeyError`; MISSING swept keys raise
-    `KeyError`. Pure: no wandb, no network.
+    `KeyError`. Each swept value is coerced to its real type at this boundary, so a
+    wrong-typed wandb value raises a clear `ValueError`/`TypeError` here rather than failing
+    much later. Pure: no wandb, no network.
     """
     keys = set(wandb_config)
     unknown = keys - _SWEPT_KEYS
@@ -51,10 +57,15 @@ def config_from_wandb(wandb_config: Mapping[str, object]) -> ExperimentConfig:
 
     return replace(
         BASE_CONFIG,
-        optim=replace(BASE_CONFIG.optim, lr=wandb_config["lr"]),
-        train=replace(BASE_CONFIG.train, epochs=wandb_config["epochs"]),
-        data=replace(BASE_CONFIG.data, batch_size=wandb_config["batch_size"]),
-        reg=replace(BASE_CONFIG.reg, lam=wandb_config["lam"]),
+        optim=replace(BASE_CONFIG.optim, lr=float(cast(_Scalar, wandb_config["lr"]))),
+        train=replace(
+            BASE_CONFIG.train, epochs=int(cast(_Scalar, wandb_config["epochs"]))
+        ),
+        data=replace(
+            BASE_CONFIG.data,
+            batch_size=int(cast(_Scalar, wandb_config["batch_size"])),
+        ),
+        reg=replace(BASE_CONFIG.reg, lam=float(cast(_Scalar, wandb_config["lam"]))),
     )
 
 
