@@ -324,25 +324,39 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   push more neurons to the endpoints and grow the bimodal $q_i$ split, and run the deeper
   CIFAR-10 MLP.
 
-### 2026-06-08 — CIFAR-10 λ>0 (regularizer + masked surgery) — *queued*
-- **Setup:** ReLUMLP (3072→256→256→10) / CIFAR-10 / λ=0.05 / τ exponential 1.0→0.1 / Adam
-  lr 1e-3 / 10 epochs / seed 0 / CPU. Config:
-  [`configs/cifar10.json`](../../configs/cifar10.json).
-- **Result:** *not yet run.* Reproduce it (downloads CIFAR-10 to `./data`, trains on CPU) with:
-  ```bash
-  uv run python -m kill_nonlinearities.experiments.run --config configs/cifar10.json
-  ```
-  For an online run with wandb tracking, set `"mode": "online"` in `configs/cifar10.json` and
-  `uv run wandb login` first; artifacts land under `runs/cifar10-lambda/` and stream to wandb.
-  To produce the λ trade-off curve, launch a wandb sweep over `{lr, epochs, batch_size, λ}`
-  from your own wandb account:
-  ```bash
-  uv run python -c "from kill_nonlinearities.experiments.sweep import launch_sweep; \
-  print(launch_sweep({'lr':[1e-3,3e-3],'epochs':[10,20],'batch_size':[64,128],'lam':[0.0,0.01,0.1]}, method='grid', count=12))"
-  ```
-- **Takeaway:** *pending the run.* CIFAR-10 on a flat MLP is a harder, lower-ceiling task than
-  MNIST, so expect fewer exactly-consistent neurons at the same λ; the headline comparison is
-  the acc-vs-k val/test gap against MNIST.
+### 2026-06-09 — CIFAR-10 λ>0 (regularizer + masked surgery)
+- **Setup:** ReLUMLP (3072→256→256→10, 512 hidden neurons) / CIFAR-10 / λ=0.05 / τ exponential
+  1.0→0.1 / Adam lr 1e-3 / 10 epochs / seed 0 / CPU. Config:
+  [`configs/cifar10.json`](../../configs/cifar10.json). Run offline:
+  `uv run python -m kill_nonlinearities.experiments.run --config configs/cifar10.json`.
+- **Result:** val acc **0.5058**, test acc **0.5195** (k=0) — the expected ceiling for a flat MLP
+  on CIFAR-10. Of 512 neurons, **55 reached exact $q\in\{0,1\}$** (the lossless prefix) and **76
+  had sign-entropy < 0.05 nats** — *comparable sign-consistency to MNIST at the same λ, on a much
+  harder task.* Masking the 55 entropy-0 neurons is bit-exactly lossless on the selection set;
+  accuracy holds (~0.51) through k≈100 then degrades. The entropy ranking dominates the random
+  baseline in the accuracy-preserving low-/mid-k regime (e.g. k≈150: ~0.49 val vs ~0.41 random),
+  but the curves **cross at high k** (k≳250 random edges ahead) — there entropy-order is forced to
+  convert the genuinely-nonlinear, high-entropy neurons it kept for last, and both collapse toward
+  chance (~0.14) as k→512. Unlike MNIST, the per-neuron mean-pre-activation histograms are
+  unimodal (negative-shifted), not cleanly bimodal — less clean dead/passthrough specialization on
+  the harder task. Plots:
+
+  | Accuracy vs. *k* (val / test / random) | Sign-entropy per neuron |
+  | --- | --- |
+  | ![cifar accuracy vs k](assets/cifar10-lambda/acc_vs_k.png) | ![cifar sign-entropy](assets/cifar10-lambda/entropy_map.png) |
+
+  | Mean pre-activation per neuron | Soft `pᵢ` vs. hard `qᵢ` |
+  | --- | --- |
+  | ![cifar mean pre-activation](assets/cifar10-lambda/mean_pre_dist.png) | ![cifar soft vs hard](assets/cifar10-lambda/soft_vs_hard.png) |
+
+  (Full set incl. loss curves + the two GIFs under
+  [`assets/cifar10-lambda/`](assets/cifar10-lambda/).)
+- **Takeaway:** the method **transfers to CIFAR-10** — a similar count of sign-consistent neurons
+  (55 exactly-eliminable), and the lossless-prefix + entropy-beats-random story holds in the
+  accuracy-preserving regime, just at the MLP's ~52% ceiling. The high-*k* entropy/random crossing
+  is sharper than on MNIST. For an online run / hyperparameter sweep with wandb, set
+  `"mode": "online"` in the config (`uv run wandb login` first) and use
+  [`scripts/launch_sweep.py`](../../scripts/launch_sweep.py).
 
 ```
 ### YYYY-MM-DD — <one-line title>
