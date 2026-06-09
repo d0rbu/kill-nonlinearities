@@ -91,3 +91,24 @@ def make_dataloaders(
         num_workers=config.data.num_workers,
     )
     return train_loader, val_loader, test_loader
+
+
+def select_probe_neurons(model: object, num: int, seed: int) -> list[tuple[str, int]]:
+    """Pick a fixed, seeded set of ``num`` (site, neuron_index) probe pairs (spec §4.9).
+
+    The set is deterministic in ``seed`` and invariant across calls / checkpoints /
+    sweep runs ``[R25]`` so a probe GIF reflects weight evolution only. If ``num``
+    exceeds the total neuron count, all neurons are returned.
+    """
+    site_names: tuple[str, ...] = model.site_names  # ty: ignore[unresolved-attribute]
+    activations = model.activations  # ty: ignore[unresolved-attribute]
+    all_pairs: list[tuple[str, int]] = []
+    for name, act in zip(site_names, activations, strict=True):
+        width = int(act.mode.shape[0])
+        all_pairs.extend((name, i) for i in range(width))
+
+    count = min(num, len(all_pairs))
+    gen = torch.Generator()
+    gen.manual_seed(seed)
+    order = torch.randperm(len(all_pairs), generator=gen).tolist()
+    return [all_pairs[i] for i in order[:count]]
