@@ -87,3 +87,41 @@ def test_synthetic_val_carved_from_train_by_fraction() -> None:
     assert n_train == total - n_val
     assert n_val > 0
     assert n_train > 0
+
+
+def _stack_dataset(dataset: object) -> tuple[Tensor, Tensor]:
+    """Materialize a (small) dataset's inputs and labels into stacked tensors."""
+    xs: list[Tensor] = []
+    ys: list[Tensor] = []
+    for x, y in dataset:  # ty: ignore[not-iterable]
+        xs.append(x)
+        ys.append(torch.as_tensor(y))
+    return torch.stack(xs), torch.stack(ys)
+
+
+def test_synthetic_split_is_deterministic_under_split_seed() -> None:
+    """Same config → identical val/train partition (spec §8 determinism recipe)."""
+    config = _synthetic_config(split_seed=7)
+    train_a, val_a, _ = make_dataloaders(config)
+    train_b, val_b, _ = make_dataloaders(config)
+
+    xa, ya = _stack_dataset(val_a.dataset)
+    xb, yb = _stack_dataset(val_b.dataset)
+    assert torch.equal(xa, xb)
+    assert torch.equal(ya, yb)
+
+    txa, tya = _stack_dataset(train_a.dataset)
+    txb, tyb = _stack_dataset(train_b.dataset)
+    assert torch.equal(txa, txb)
+    assert torch.equal(tya, tyb)
+
+
+def test_synthetic_split_changes_with_split_seed() -> None:
+    """A different split_seed yields a different (non-degenerate) val partition."""
+    val_seed0 = _stack_dataset(
+        make_dataloaders(_synthetic_config(split_seed=0))[1].dataset
+    )
+    val_seed1 = _stack_dataset(
+        make_dataloaders(_synthetic_config(split_seed=1))[1].dataset
+    )
+    assert not torch.equal(val_seed0[0], val_seed1[0])
