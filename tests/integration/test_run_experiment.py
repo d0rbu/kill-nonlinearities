@@ -3,7 +3,10 @@
 import copy
 import dataclasses
 import importlib
+import json
 import math
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -29,7 +32,11 @@ from kill_nonlinearities.config import (
     WandbConfig,
 )
 from kill_nonlinearities.data.datasets import make_dataloaders
-from kill_nonlinearities.experiments.run import ExperimentResult, run_experiment
+from kill_nonlinearities.experiments.run import (
+    ExperimentResult,
+    config_from_json,
+    run_experiment,
+)
 from kill_nonlinearities.models.activations import ActivationMode
 from kill_nonlinearities.surgery.apply import apply_modes
 from kill_nonlinearities.training.logging import InMemoryLogger
@@ -273,3 +280,58 @@ def test_k_equals_total_converts_all_neurons_and_logits_finite(
     with torch.no_grad():
         logits = work(probe).logits
     assert torch.isfinite(logits).all()
+
+
+def test_config_from_json_builds_nested_config(tmp_path: Path) -> None:
+    """config_from_json maps a nested JSON object into an ExperimentConfig (§4.13)."""
+    payload = {
+        "name": "from-json",
+        "model": {"input_dim": 12, "hidden_dims": [8, 8], "output_dim": 3},
+        "optim": {"lr": 0.01, "weight_decay": 0.0, "name": "adam"},
+        "temp_schedule": {"kind": "exponential", "tau_start": 1.0, "tau_end": 0.1},
+        "reg": {"lam": 0.05, "entropy_eps": 1e-6},
+        "data": {"dataset": "synthetic", "batch_size": 8},
+        "surgery": {"num_k": 5, "random_baseline": True, "tie_break": "identity"},
+        "train": {"epochs": 2, "seed": 0, "device": "cpu"},
+    }
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(payload))
+
+    config = config_from_json(path)
+
+    assert config.name == "from-json"
+    assert config.model.input_dim == 12
+    assert config.model.hidden_dims == (8, 8)  # JSON array coerced to tuple
+    assert config.optim.lr == 0.01
+    assert config.temp_schedule.kind == "exponential"
+    assert config.reg.lam == 0.05
+    assert config.data.dataset == "synthetic"
+    assert config.data.batch_size == 8
+    assert config.surgery.num_k == 5
+    assert config.train.epochs == 2
+
+
+def test_config_from_json_missing_section_uses_defaults(tmp_path: Path) -> None:
+    """Sections absent from the JSON fall back to ExperimentConfig() defaults."""
+    path = tmp_path / "minimal.json"
+    path.write_text(json.dumps({"name": "minimal"}))
+
+    config = config_from_json(path)
+    default = ExperimentConfig()
+
+    assert config.name == "minimal"
+    assert config.model == default.model
+    assert config.optim == default.optim
+    assert config.train == default.train
+
+
+def test_cli_module_help_runs() -> None:
+    """`python -m kill_nonlinearities.experiments.run --help` exits 0 (§4.13 CLI)."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "kill_nonlinearities.experiments.run", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "Run a Phase-1a experiment." in proc.stdout
