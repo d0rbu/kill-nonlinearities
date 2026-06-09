@@ -1,11 +1,12 @@
-# Architecture overview (planned)
+# Architecture overview
 
 [← Architecture](README.md) · [← Documentation hub](../README.md)
 
-> **Status:** design intent, not yet implemented. The package
-> (`src/kill_nonlinearities/`) currently contains only a version marker. This document
-> describes how we *intend* to grow it so that implementation stays coherent. Treat it as a
-> living design that the first implementation PR may refine.
+> **Status:** Phase 1a is **in progress**. The realized layout below matches the
+> [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md); the
+> `regularization/`, `models/`, `training/`, `data/`, `analysis/`, `surgery/`, `viz/`, and
+> `experiments/` packages exist. This document tracks the realized structure and the
+> load-bearing design decisions.
 
 ## Guiding principles
 
@@ -36,7 +37,7 @@ their forward output.
 - **No lifecycle bugs.** Hooks leak if not removed, fire in surprising orders, and interact
   badly with `torch.compile`, data-parallel wrappers, and module surgery.
 
-**Sketch of the intended interface** (illustrative — *not yet implemented*):
+**The realized interface** (frozen by the [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md)):
 
 ```python
 from dataclasses import dataclass
@@ -45,54 +46,92 @@ import torch
 from torch import Tensor, nn
 
 
-@dataclass
+@dataclass(frozen=True, eq=False)  # identity eq/hash — tensors are not value-comparable
 class ForwardOutput:
     """A forward pass plus the pre-ReLU activations the regularizer consumes."""
 
-    logits: Tensor
-    pre_activations: list[Tensor]  # one [batch, features] tensor per regularized ReLU site
+    logits: Tensor                       # [B, C]
+    pre_activations: tuple[Tensor, ...]  # one [B, N_ℓ] per SelectiveReLU site, forward order
+    site_names: tuple[str, ...]          # stable ids aligned with pre_activations, e.g. ("relu0", "relu1")
 
 
 class ReLUMLP(nn.Module):
     def forward(self, x: Tensor) -> ForwardOutput:
+        x = x.flatten(1)  # MNIST [B,1,28,28] & CIFAR [B,3,32,32] → [B, input_dim]
         pre: list[Tensor] = []
-        for linear in self.linears[:-1]:
+        for linear, act in zip(self.linears, self.activations, strict=True):
             z = linear(x)
-            pre.append(z)          # capture the pre-activation explicitly
-            x = torch.relu(z)      # forward stays a plain ReLU
-        return ForwardOutput(logits=self.linears[-1](x), pre_activations=pre)
+            pre.append(z)  # capture the literal input tensor to this activation site
+            x = act(z)     # act is a SelectiveReLU; default mode is plain ReLU
+        return ForwardOutput(self.head(x), tuple(pre), self.site_names)
 ```
 
-The regularizer then consumes `output.pre_activations` directly. Returning a structured
-object (rather than a bare tuple) keeps call sites readable and lets the shape evolve.
+`ForwardOutput` is `frozen=True, eq=False`: it is a transport struct, so equality/hashing
+fall back to identity and callers compare its tensor fields with `torch.equal`, never `==`
+on the whole object. The activation at each site is a **`SelectiveReLU`**, not a bare
+`torch.relu`: it carries an int64 `mode` buffer of shape `[N]` (default all-`RELU`) and per
+neuron applies `RELU` (plain `torch.relu`), `ZERO` (dead → outputs zeros), or `IDENTITY`
+(passthrough → outputs `z`). With every neuron in `RELU` mode its output equals
+`torch.relu(z)` bit-for-bit (invariant **I1**), so an untouched model is exactly the ReLU
+network it always was. Surgery is performed by setting modes on a `deepcopy` of the model;
+the canonical model is never mutated.
 
-## Planned module layout
+The `linears`/`activations` accessors are typed properties over the model's
+`nn.ModuleList` containers: `ty` erases the element types of a `ModuleList`, so the
+properties re-cast them to `list[nn.Linear]` / `list[SelectiveReLU]` while returning the
+same live, registered modules (so callers can write `model.activations[i].set_modes(...)`).
+The regularizer consumes `output.pre_activations` directly.
+
+## Module layout
 
 ```
 src/kill_nonlinearities/
-├── __init__.py          # package marker + __version__ (exists)
-├── models/              # model classes that EMIT pre-activations (no hooks)
-│   ├── mlp.py           #   phase 1a: ReLU MLP for MNIST/CIFAR
-│   └── transformer.py   #   phase 1b: small transformer LM (FFN blocks)
+├── __init__.py          # package marker + __version__
+├── config.py            # frozen dataclasses (ModelConfig, …, ExperimentConfig)
+├── models/              # networks that EMIT pre-activations (no hooks)
+│   ├── outputs.py       #   ForwardOutput (frozen, eq=False)
+│   ├── activations.py   #   ActivationMode; SelectiveReLU (int64 mode buffer)
+│   └── mlp.py           #   ReLUMLP(ModelConfig) → ForwardOutput
 ├── regularization/      # the sign-consistency loss, as pure functions
-│   ├── surrogate.py     #   soft_sign(z, tau) = sigmoid(z / tau)
-│   ├── entropy.py       #   binary_entropy(p); batch_fraction_positive(...)
-│   └── loss.py          #   sign_consistency_loss(pre_activations, tau) -> Tensor
-├── training/            # training loop, tau-annealing schedule, lambda config
-└── analysis/            # hard fraction-positive q_i, neuron classification, metrics/plots
+│   ├── surrogate.py     #   soft_sign(z, tau)
+│   ├── entropy.py       #   binary_entropy; batch/hard_fraction_positive; sign_entropy
+│   └── loss.py          #   sign_consistency_loss(pre_activations, tau, eps)
+├── training/            # training loop, τ-annealing, logging, checkpoints
+│   ├── schedule.py      #   TemperatureSchedule; checkpoint_steps
+│   ├── logging.py       #   Logger protocol; NullLogger; InMemoryLogger; WandbLogger
+│   ├── checkpoint.py    #   save_checkpoint / load_checkpoint
+│   └── trainer.py       #   train(...) → TrainResult
+├── data/                # dataloaders + probe selection
+│   └── datasets.py      #   make_dataloaders; select_probe_neurons; make_probe_batch
+├── analysis/            # hard sign statistics + neuron ranking/selection
+│   ├── statistics.py    #   collect_pre_activations; neuron_stats; collect_history
+│   └── selection.py     #   rank_by_entropy/rank_random; make_k_grid; select_topk; assign_modes
+├── surgery/             # masked-activation surgery (no folding/pruning)
+│   └── apply.py         #   apply_modes; evaluate_accuracy; k_sweep
+├── viz/                 # headless figures + GIFs (matplotlib Agg, imageio+pillow)
+│   ├── plots.py
+│   └── animation.py
+└── experiments/         # end-to-end runner + wandb sweep glue
+    ├── run.py           #   run_experiment(config); CLI
+    └── sweep.py         #   build_sweep_config; config_from_wandb; sweep_entry; launch_sweep
 ```
 
-A future **`surgery/`** module (phase 2) will replace/prune/fold eliminable units. It is
-intentionally absent until phase 1 analysis justifies it.
+**Surgery is masked-activation only.** Phase 1a does *not* fold linear layers or structurally
+prune width; instead it flips each eliminable neuron's `SelectiveReLU` mode to `ZERO` or
+`IDENTITY` and measures accuracy-vs-k. Linear-folding/pruning stays out of scope.
 
 ### Module responsibilities
 
 | Module | Does | Depends on |
 | --- | --- | --- |
-| `models/` | define networks; return logits **and** pre-activations | `torch` |
-| `regularization/` | turn pre-activations into the scalar $\mathcal{L}_{\text{reg}}$ | `torch` |
-| `training/` | optimize $\mathcal{L}_{\text{task}} + \lambda\mathcal{L}_{\text{reg}}$; anneal $\tau$ | `models/`, `regularization/` |
-| `analysis/` | measure $q_i$, classify neurons, emit metrics/plots | `models/` |
+| `models/` | define networks; return logits **and** pre-activations; carry `SelectiveReLU` modes | `torch` |
+| `regularization/` | turn pre-activations into the scalar $\mathcal{L}_{\text{reg}}$ (loss clamps $p$) | `torch` |
+| `training/` | optimize $\mathcal{L}_{\text{task}} + \lambda\mathcal{L}_{\text{reg}}$; anneal $\tau$; log; checkpoint | `models/`, `regularization/` |
+| `data/` | build deterministic train/val/test loaders; pick fixed probe neurons/inputs | `torch`, `torchvision` |
+| `analysis/` | measure $q_i$, $H(q_i)$; rank neurons; build the k-grid; assign modes | `models/`, `regularization/` |
+| `surgery/` | apply modes to a deepcopy; evaluate accuracy; run the k-sweep | `models/`, `analysis/` |
+| `viz/` | render static figures + GIFs headlessly (Agg) | `matplotlib`, `imageio`, `pillow` |
+| `experiments/` | wire the pipeline end-to-end; wandb logging + sweeps (lazy import) | all of the above, `wandb` |
 
 Each maps directly onto a step in [the method](../research/README.md#the-method). When a
 file starts doing more than its row above, that is the signal to split it.

@@ -21,14 +21,16 @@ and elimination plan before touching research code.**
 
 ## Status & scope
 
-🚧 **Scaffold.** Tooling, the test harness, and docs exist; **no research code is
-implemented yet** (`src/kill_nonlinearities/` is just a version marker).
+🚧 **Phase 1a in progress.** The regularizer, models (`SelectiveReLU` + `ReLUMLP`), training,
+data, analysis, **masked-activation surgery**, viz, and the experiment runner/sweep glue are
+implemented per [`docs/specs/2026-06-08-phase1a-regularizer-and-surgery-design.md`](docs/specs/2026-06-08-phase1a-regularizer-and-surgery-design.md).
 
-- The near-term work is **analysis-first**: implement the regularizer and *measure* how
-  sign-consistent the network becomes and at what accuracy cost. Actual network surgery
-  (replace/prune/fold) is an explicit **later phase** — do not jump ahead to it.
+- The work stays **analysis-first plus masked surgery**: flip a neuron's `SelectiveReLU`
+  **mode** (`ZERO`/`IDENTITY`), don't fold or structurally prune — that's a later phase. Do
+  not jump ahead to linear-folding.
 - Don't add features beyond what a task asks for. The [roadmap](docs/research/README.md#roadmap)
-  is the plan of record.
+  and the [phase-1a spec](docs/specs/2026-06-08-phase1a-regularizer-and-surgery-design.md) are
+  the plan of record.
 
 ## Repository map
 
@@ -42,9 +44,10 @@ uv.lock                   committed lockfile
 docs/                     hierarchical docs — start at docs/README.md
   research/README.md         the method, the math, and the experiment log
   development/               setup · tooling · testing · contributing
-  architecture/overview.md   planned code layout + key design decisions
-src/kill_nonlinearities/  the package (scaffold)
-tests/                    the test suite
+  architecture/overview.md   realized code layout + key design decisions
+  specs/                     dated design specs (phase-1a is the design of record)
+src/kill_nonlinearities/  the package (models, regularization, training, data, analysis, surgery, viz, experiments)
+tests/                    the test suite (unit / functional / integration)
 ```
 
 ## Environment & commands
@@ -55,6 +58,9 @@ tests/                    the test suite
   interpreter on first `uv sync`.
 - **`torch` defaults to the CPU build** (the PyPI Linux wheel is the multi-GB CUDA build).
   See [setup.md](docs/development/setup.md) to switch to CUDA.
+- **Runtime deps** now include `torchvision`, `wandb`, `matplotlib`, `imageio`, `pillow`
+  (in `[project].dependencies` — the integration tests import them end-to-end). Tests run
+  offline: `tests/conftest.py` forces `WANDB_MODE=disabled` + `MPLBACKEND=Agg`.
 
 ```bash
 just setup       # uv sync + install git hooks (first time)
@@ -80,7 +86,7 @@ Full recipe list: [`docs/development/tooling.md`](docs/development/tooling.md).
    [architecture/overview.md](docs/architecture/overview.md#key-decision-models-emit-their-own-pre-activations-no-hooks).
 6. **Pure functions for the math** (`regularization/`); side effects (I/O, plotting,
    checkpoints) live in `training/` / `analysis/`.
-7. **Keep modules single-purpose** per the [planned layout](docs/architecture/overview.md). A
+7. **Keep modules single-purpose** per the [module layout](docs/architecture/overview.md). A
    file outgrowing one responsibility is a signal to split it.
 8. **Update docs in the same change** — especially the
    [experiment log](docs/research/README.md#experiment-log) after running experiments.
@@ -102,5 +108,5 @@ Full recipe list: [`docs/development/tooling.md`](docs/development/tooling.md).
 - Python 3.14 currently resolves to **3.14.0rc3** via `uv`'s index; if a dependency lacks a
   3.14 wheel, fall back to `uv python pin 3.13` (everything works on the floor).
 - The CPU `torch` index is set in `pyproject.toml`; a plain `uv sync` will **not** pull CUDA.
-- No GitHub remote yet, so roadmap items aren't issues yet — see
+- Roadmap items aren't filed as GitHub issues yet — see
   [contributing.md](docs/development/contributing.md#roadmap--issues).

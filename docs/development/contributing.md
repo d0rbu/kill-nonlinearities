@@ -35,7 +35,7 @@ A change is done when **all** of these hold:
 - Formatting and linting are **not manual** — `ruff` decides. Run `just fmt`.
 - Type everything. `from __future__ import annotations` is fine; prefer precise types
   (`Tensor` shapes in docstrings/comments where they aid the reader).
-- Keep modules single-purpose (see the [planned layout](../architecture/overview.md)). A file
+- Keep modules single-purpose (see the [module layout](../architecture/overview.md)). A file
   growing past one clear responsibility is a signal to split it.
 - Pure functions for the math; side effects (I/O, plotting, checkpoints) live in
   `training/`/`analysis/`, not in `regularization/`.
@@ -49,10 +49,10 @@ A change is done when **all** of these hold:
 
 ## Roadmap & issues
 
-The plan of record is the [roadmap](../research/README.md#roadmap). This repository does not
-have a GitHub remote yet, so tracked work lives in that roadmap for now. **Once a remote
-exists**, mirror the roadmap items as issues (toy-MLP regularizer + analysis, small
-transformer, phase-2 surgery) and link them back from the roadmap.
+The plan of record is the [roadmap](../research/README.md#roadmap). Roadmap items aren't filed
+as GitHub issues yet; tracked work lives in that roadmap for now. Mirror the roadmap items as
+issues (toy-MLP regularizer + analysis, small transformer, phase-2 surgery) and link them back
+from the roadmap.
 
 ---
 

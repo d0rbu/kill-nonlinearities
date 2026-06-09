@@ -1,0 +1,55 @@
+{
+  "name": "cifar10-lambda",
+  "model": {
+    "input_dim": 3072,
+    "hidden_dims": [256, 256],
+    "output_dim": 10
+  },
+  "optim": {
+    "lr": 0.001,
+    "weight_decay": 0.0,
+    "name": "adam"
+  },
+  "temp_schedule": {
+    "kind": "exponential",
+    "tau_start": 1.0,
+    "tau_end": 0.1
+  },
+  "reg": {
+    "lam": 0.05,
+    "entropy_eps": 1e-6
+  },
+  "data": {
+    "dataset": "cifar10",
+    "batch_size": 128,
+    "eval_batch_size": 512,
+    "val_fraction": 0.1,
+    "split_seed": 0,
+    "data_dir": "data",
+    "num_workers": 0
+  },
+  "probe": {
+    "num_neurons": 16,
+    "seed": 0,
+    "batch_size": 512
+  },
+  "checkpoint": {
+    "every_epochs": 1,
+    "dir": "runs"
+  },
+  "surgery": {
+    "num_k": 21,
+    "random_baseline": true,
+    "tie_break": "identity"
+  },
+  "wandb": {
+    "project": "kill-nonlinearities",
+    "mode": "disabled",
+    "tags": ["cifar10", "phase-1a"]
+  },
+  "train": {
+    "epochs": 10,
+    "seed": 0,
+    "device": "cpu"
+  }
+}

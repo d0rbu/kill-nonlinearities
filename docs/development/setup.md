@@ -12,6 +12,13 @@
 `ruff`, `ty`, `pytest`, `hypothesis`, `pytest-cov`, and `pre-commit` are **dev
 dependencies** — `uv` installs them; you do not install them globally.
 
+### Runtime dependencies
+
+Phase 1a adds runtime dependencies (in `[project].dependencies`, not dev-only, because the
+integration tests import them end-to-end): **`torchvision`** (MNIST/CIFAR), **`wandb`**
+(experiment tracking + sweeps), **`matplotlib`** (figures), and **`imageio`** + **`pillow`**
+(GIFs). `numpy` arrives transitively. `uv sync` installs them all.
+
 ## Python version
 
 The project pins **Python 3.14** via [`.python-version`](../../.python-version), with
@@ -39,6 +46,45 @@ Verify:
 ```bash
 just check        # lint + type-check + test, all green
 ```
+
+## Weights & Biases (wandb)
+
+Experiment tracking and hyperparameter sweeps use [wandb](https://wandb.ai/). For **real
+runs** (milestone 9), log in once:
+
+```bash
+uv run wandb login        # paste your API key from https://wandb.ai/authorize
+```
+
+You do **not** need an account to develop: the test suite forces `WANDB_MODE=disabled` (no
+network, no login) via the shared [`tests/conftest.py`](../../tests/conftest.py), and you can
+run experiments offline with `WandbConfig.mode="offline"` (logs to a local `wandb/` dir) or
+skip logging entirely with `mode="disabled"`. Only the documented MNIST/CIFAR runs and live
+sweeps need `mode="online"`.
+
+## Headless plotting (`MPLBACKEND=Agg`)
+
+All figures and GIFs are rendered headlessly: the code selects matplotlib's **Agg** backend
+before importing `pyplot` and never calls `plt.show()`. Tests also export `MPLBACKEND=Agg`
+(via `tests/conftest.py`) so they never try to open a display. If you render manually on a
+headless box, export it yourself:
+
+```bash
+export MPLBACKEND=Agg
+```
+
+## Run an experiment
+
+The runner is `kill_nonlinearities.experiments.run`; pass a nested JSON `ExperimentConfig`
+(see [`configs/mnist.json`](../../configs/mnist.json)). The standalone CLI uses a no-op
+logger, so it needs no wandb account and downloads MNIST to `./data` on first run:
+
+```bash
+uv run python -m kill_nonlinearities.experiments.run --config configs/mnist.json
+```
+
+Artifacts (loss curves, entropy map, acc-vs-k, both GIFs, …) land under `runs/<name>/`.
+`./data/`, `runs/`, and `wandb/` are all git-ignored.
 
 ## CPU vs. CUDA `torch`
 

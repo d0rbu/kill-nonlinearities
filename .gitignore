@@ -62,8 +62,10 @@ ipython_config.py
 
 # ---- ML / experiment artifacts ----
 # Datasets, checkpoints, logs, and run outputs should not be committed.
-data/
-datasets/
+# Anchored to the repo root so the source package src/kill_nonlinearities/data/
+# (and similarly-named source dirs) stays tracked.
+/data/
+/datasets/
 checkpoints/
 ckpts/
 *.ckpt

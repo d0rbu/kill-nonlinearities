@@ -82,6 +82,38 @@ diagnostics escalated to errors (`possibly-unresolved-reference`, `division-by-z
 > re-check the rule names in `[tool.ty.rules]` against the
 > [current rules reference](https://docs.astral.sh/ty/reference/rules/).
 
+## `wandb` — experiment tracking & sweeps
+
+[Weights & Biases](https://wandb.ai/) tracks training metrics, logs artifacts (figures,
+GIFs), and runs hyperparameter **sweeps** over `{lr, epochs, batch_size, λ}`.
+
+```bash
+uv run wandb login        # one-time auth for online runs
+uv run wandb offline      # toggle the CLI default to offline (local logging)
+WANDB_MODE=disabled ...   # no logging at all (what the test suite uses)
+```
+
+- **Lazy import.** `wandb` is imported **only inside** `WandbLogger` and the sweep glue, and
+  only at call time, so importing the pure helpers (loss, analysis, config translation) never
+  requires wandb. Tests never construct `WandbLogger`; they use `InMemoryLogger`.
+- **Modes** (`WandbConfig.mode`): `online` (default; needs login), `offline` (local `wandb/`
+  dir), `disabled` (no-op). The test suite forces `WANDB_MODE=disabled` via
+  [`tests/conftest.py`](../../tests/conftest.py).
+- **Artifacts** are saved under `runs/<name>/` *and* logged via `wandb.Image` (figures) and
+  `wandb.Video` (GIFs — no ffmpeg, the gif path is passed directly).
+- **Sweeps** over `{lr, epochs, batch_size, λ}`: after a one-time login, launch with
+  [`scripts/launch_sweep.py`](../../scripts/launch_sweep.py):
+
+  ```bash
+  uv run wandb login
+  uv run --no-sync python scripts/launch_sweep.py --method grid --count 24
+  ```
+
+  The agent runs `run_experiment` once per trial (each with a unique run name so trials don't
+  share an output dir), logging to wandb and optimizing the `val/acc` metric. For an
+  **offline** trade-off curve without wandb, use
+  [`scripts/lambda_sweep.py`](../../scripts/lambda_sweep.py) instead.
+
 ## `pre-commit`
 
 [`.pre-commit-config.yaml`](../../.pre-commit-config.yaml) runs on every commit (after

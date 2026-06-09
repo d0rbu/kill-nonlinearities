@@ -1,0 +1,554 @@
+"""Integration tests for run_experiment (spec §4.13, §5, §7)."""
+
+import copy
+import dataclasses
+import importlib
+import json
+import math
+import subprocess
+import sys
+from collections.abc import Mapping
+from pathlib import Path
+
+import pytest
+import torch
+
+from kill_nonlinearities.analysis.selection import (
+    assign_modes,
+    make_k_grid,
+    rank_by_entropy,
+    select_topk,
+)
+from kill_nonlinearities.config import (
+    CheckpointConfig,
+    DataConfig,
+    ExperimentConfig,
+    ModelConfig,
+    OptimConfig,
+    ProbeConfig,
+    RegConfig,
+    SurgeryConfig,
+    TempScheduleConfig,
+    TrainConfig,
+    WandbConfig,
+)
+from kill_nonlinearities.data.datasets import make_dataloaders, make_probe_batch
+from kill_nonlinearities.experiments.run import (
+    ExperimentResult,
+    config_from_json,
+    run_experiment,
+)
+from kill_nonlinearities.models.activations import ActivationMode
+from kill_nonlinearities.regularization.surrogate import soft_sign
+from kill_nonlinearities.surgery.apply import apply_modes
+from kill_nonlinearities.training.logging import InMemoryLogger
+from kill_nonlinearities.training.schedule import checkpoint_steps
+from kill_nonlinearities.viz import plots as viz_plots
+from kill_nonlinearities.viz.animation import gif_frame_count
+
+
+def make_synthetic_config(tmp_path: Path) -> ExperimentConfig:
+    """Tiny, seeded, lambda>0 synthetic config writing all artifacts under tmp_path."""
+    return ExperimentConfig(
+        name="it-synthetic",
+        model=ModelConfig(input_dim=12, hidden_dims=(8, 8), output_dim=3),
+        optim=OptimConfig(lr=1e-2, weight_decay=0.0, name="adam"),
+        temp_schedule=TempScheduleConfig(
+            kind="exponential", tau_start=1.0, tau_end=0.1
+        ),
+        reg=RegConfig(lam=0.05, entropy_eps=1e-6),
+        data=DataConfig(
+            dataset="synthetic",
+            batch_size=8,
+            eval_batch_size=16,
+            val_fraction=0.25,
+            split_seed=0,
+            drop_last=False,
+            data_dir=str(tmp_path / "data"),
+            num_workers=0,
+        ),
+        probe=ProbeConfig(num_neurons=4, seed=0, batch_size=16),
+        checkpoint=CheckpointConfig(every_epochs=1, dir=str(tmp_path / "runs")),
+        surgery=SurgeryConfig(num_k=5, random_baseline=True, tie_break="identity"),
+        wandb=WandbConfig(
+            project="kill-nonlinearities",
+            entity=None,
+            mode="disabled",
+            group=None,
+            tags=(),
+        ),
+        train=TrainConfig(epochs=2, seed=0, device="cpu", grad_clip=None),
+    )
+
+
+@pytest.fixture
+def synthetic_config(tmp_path: Path) -> ExperimentConfig:
+    return make_synthetic_config(tmp_path)
+
+
+def test_experiments_package_imports() -> None:
+    """The experiments package is importable as a namespace marker."""
+    module = importlib.import_module("kill_nonlinearities.experiments")
+    assert module is not None
+
+
+def test_experiment_result_has_expected_fields() -> None:
+    """ExperimentResult exposes the spec §4.13 fields, including artifact_paths."""
+    field_names = {f.name for f in dataclasses.fields(ExperimentResult)}
+    assert field_names == {
+        "model",
+        "train_result",
+        "neuron_stats",
+        "k_points",
+        "random_k_points",
+        "frames",
+        "artifact_paths",
+    }
+
+
+def test_run_experiment_returns_populated_result(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """run_experiment wires the full pipeline and returns a populated result (§5)."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    assert isinstance(result, ExperimentResult)
+    assert result.train_result.history
+    for m in result.train_result.history:
+        assert math.isfinite(m.task_loss)
+        assert math.isfinite(m.reg_loss)
+        assert math.isfinite(m.total_loss)
+    assert result.neuron_stats
+    assert result.k_points
+    assert result.random_k_points
+    assert result.frames
+    assert set(result.artifact_paths) == {
+        "loss_curves",
+        "mean_pre_dist",
+        "entropy_map",
+        "per_layer_entropy",
+        "acc_vs_k",
+        "soft_vs_hard",
+        "activation_gif",
+        "qi_bimodality_gif",
+    }
+
+
+def test_checkpoints_land_at_expected_steps(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """Checkpoint count/positions match checkpoint_steps for the realized total_steps."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    train_loader, _, _ = make_dataloaders(synthetic_config)
+    steps_per_epoch = len(train_loader)
+    total_steps = synthetic_config.train.epochs * steps_per_epoch
+    expected = checkpoint_steps(
+        total_steps, steps_per_epoch, synthetic_config.checkpoint.every_epochs
+    )
+
+    assert len(result.train_result.checkpoint_paths) == len(expected)
+    assert all(p.exists() for p in result.train_result.checkpoint_paths)
+
+
+def test_k_sweep_covers_every_grid_point_with_val_and_test(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """Each KPoint carries a finite val_acc and test_acc, one per unique k-grid point."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    total = len(result.neuron_stats)
+    expected_grid = make_k_grid(total, synthetic_config.surgery.num_k)
+
+    assert [kp.k for kp in result.k_points] == expected_grid
+    assert [kp.k for kp in result.random_k_points] == expected_grid
+    for kp in (*result.k_points, *result.random_k_points):
+        assert 0.0 <= kp.val_acc <= 1.0
+        assert 0.0 <= kp.test_acc <= 1.0
+        assert math.isfinite(kp.val_acc)
+        assert math.isfinite(kp.test_acc)
+
+
+def test_run_logs_val_acc_sweep_metric(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """run_experiment logs the 'val/acc' metric the sweep config maximizes (§4.13)."""
+    logger = InMemoryLogger()
+    result = run_experiment(synthetic_config, logger=logger)
+
+    logged_keys = {k for _, values in logger.scalars for k in values}
+    assert "val/acc" in logged_keys
+    val_acc_entries = [
+        (step, values["val/acc"])
+        for step, values in logger.scalars
+        if "val/acc" in values
+    ]
+    assert len(val_acc_entries) == 1
+    val_acc_step, val_acc_value = val_acc_entries[0]
+    assert 0.0 <= val_acc_value <= 1.0
+    # val/acc is recorded at the final training step (the step a real WandbLogger
+    # needs so the sweep metric is not dropped as non-monotonic; capstone fix).
+    final_step = result.train_result.history[-1].step
+    assert val_acc_step == final_step
+
+
+def test_run_logs_val_acc_before_any_artifact(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """val/acc is logged BEFORE any image/video so its explicit step is monotonic.
+
+    Artifacts log with step=None (auto-advancing wandb's step); logging val/acc at
+    an explicit final step AFTER them would be non-monotonic and dropped on the
+    real WandbLogger. A recording logger captures the global call order to pin
+    that the val/acc scalar precedes every artifact log (capstone fix).
+    """
+
+    class OrderingLogger(InMemoryLogger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: list[str] = []
+
+        def log_scalars(self, values: Mapping[str, float], step: int) -> None:
+            if "val/acc" in values:
+                self.events.append("val/acc")
+            super().log_scalars(values, step)
+
+        def log_image(self, name: str, path: Path, step: int | None = None) -> None:
+            self.events.append(f"image:{name}")
+            super().log_image(name, path, step)
+
+        def log_video(self, name: str, path: Path, step: int | None = None) -> None:
+            self.events.append(f"video:{name}")
+            super().log_video(name, path, step)
+
+    logger = OrderingLogger()
+    run_experiment(synthetic_config, logger=logger)
+
+    assert "val/acc" in logger.events
+    artifact_events = [e for e in logger.events if e.startswith(("image:", "video:"))]
+    assert artifact_events, "expected at least one artifact log"
+    # val/acc precedes the first artifact log.
+    assert logger.events.index("val/acc") < logger.events.index(artifact_events[0])
+
+
+def test_all_artifact_files_exist_and_are_non_empty(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """Every rendered artifact is a real, non-empty file on disk."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    assert len(result.artifact_paths) == 8
+    for key, path in result.artifact_paths.items():
+        assert isinstance(path, Path), key
+        assert path.is_file(), key
+        assert path.stat().st_size > 0, key
+
+
+def test_both_gifs_have_one_frame_per_checkpoint(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """activation_gif and qi_bimodality_gif each have len(checkpoint_steps) frames."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    train_loader, _, _ = make_dataloaders(synthetic_config)
+    steps_per_epoch = len(train_loader)
+    total_steps = synthetic_config.train.epochs * steps_per_epoch
+    n_checkpoints = len(
+        checkpoint_steps(
+            total_steps, steps_per_epoch, synthetic_config.checkpoint.every_epochs
+        )
+    )
+
+    assert len(result.frames) == n_checkpoints
+    assert gif_frame_count(result.artifact_paths["activation_gif"]) == n_checkpoints
+    assert gif_frame_count(result.artifact_paths["qi_bimodality_gif"]) == n_checkpoints
+
+
+def test_acc_vs_k_axes_data_equals_k_points(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """The acc-vs-k figure's val/test line ydata equals the k_sweep accuracies ([R23])."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    total = len(result.neuron_stats)
+    lossless_prefix = sum(1 for s in result.neuron_stats if s.q in (0.0, 1.0))
+    fig, ax = viz_plots._build_acc_vs_k_axes(
+        result.k_points, result.random_k_points, total, lossless_prefix
+    )
+    try:
+        lines = ax.get_lines()
+        val_line = next(
+            line for line in lines if line.get_label() == "val (entropy order)"
+        )
+        test_line = next(
+            line for line in lines if line.get_label() == "test (entropy order)"
+        )
+        assert list(val_line.get_xdata()) == [  # ty: ignore[invalid-argument-type]
+            kp.k for kp in result.k_points
+        ]
+        assert list(val_line.get_ydata()) == [  # ty: ignore[invalid-argument-type]
+            kp.val_acc for kp in result.k_points
+        ]
+        assert list(test_line.get_ydata()) == [  # ty: ignore[invalid-argument-type]
+            kp.test_acc for kp in result.k_points
+        ]
+    finally:
+        viz_plots.plt.close(fig)
+
+
+def test_k_equals_total_converts_all_neurons_and_logits_finite(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """At k == total every neuron is converted (no RELU left) and logits are finite."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    model = result.model
+    stats = result.neuron_stats
+    total = len(stats)
+    ranked = rank_by_entropy(stats)
+
+    work = copy.deepcopy(model)
+    widths = {
+        site: int(act.mode.shape[0])
+        for site, act in zip(model.site_names, model.activations, strict=True)
+    }
+    modes = assign_modes(
+        select_topk(ranked, total), tie_break="identity", widths=widths
+    )
+    apply_modes(work, modes)
+
+    # Every neuron has been converted away from RELU (no mode == RELU remains).
+    relu = int(ActivationMode.RELU)
+    for act in work.activations:
+        assert not bool((act.mode == relu).any())
+
+    # Logits over a probe input are finite.
+    probe = torch.randn(5, synthetic_config.model.input_dim)
+    work.eval()
+    with torch.no_grad():
+        logits = work(probe).logits
+    assert torch.isfinite(logits).all()
+
+
+def test_run_experiment_three_hidden_layers(tmp_path: Path) -> None:
+    """A >=3-hidden-layer model runs the full pipeline cleanly (spec §5).
+
+    Asserts three pre-activation sites (one per hidden layer), site-name alignment
+    across model / neuron_stats / collected pre-activations, and a clean k_sweep
+    producing in-range val+test accuracy for every grid point.
+    """
+    base = make_synthetic_config(tmp_path)
+    config = dataclasses.replace(
+        base,
+        name="it-3layer",
+        model=ModelConfig(input_dim=12, hidden_dims=(6, 5, 4), output_dim=3),
+        probe=ProbeConfig(num_neurons=5, seed=0, batch_size=16),
+    )
+
+    result = run_experiment(config, logger=InMemoryLogger())
+
+    # Three hidden layers -> three pre-activation sites, names aligned everywhere.
+    expected_sites = ("relu0", "relu1", "relu2")
+    assert result.model.site_names == expected_sites
+    pre_by_site = result.frames[0].q_by_site
+    assert tuple(pre_by_site) == expected_sites
+    stat_sites = {s.site for s in result.neuron_stats}
+    assert stat_sites == set(expected_sites)
+    # Per-site neuron counts match the hidden dims (6, 5, 4).
+    site_counts = dict.fromkeys(expected_sites, 0)
+    for s in result.neuron_stats:
+        site_counts[s.site] += 1
+    assert site_counts == {"relu0": 6, "relu1": 5, "relu2": 4}
+
+    # k_sweep is clean: one in-range val+test acc per unique grid point.
+    total = len(result.neuron_stats)
+    expected_grid = make_k_grid(total, config.surgery.num_k)
+    assert [kp.k for kp in result.k_points] == expected_grid
+    for kp in (*result.k_points, *result.random_k_points):
+        assert 0.0 <= kp.val_acc <= 1.0
+        assert 0.0 <= kp.test_acc <= 1.0
+        assert math.isfinite(kp.val_acc)
+        assert math.isfinite(kp.test_acc)
+
+
+def test_run_experiment_checkpoint_cadence_every_two_epochs(tmp_path: Path) -> None:
+    """epochs>=4 + every_epochs=2: checkpoint/frame/gif counts all match the schedule.
+
+    checkpoint_paths, frames, and BOTH gifs' frame counts equal
+    len(checkpoint_steps(total_steps, steps_per_epoch, every_epochs=2)).
+    """
+    base = make_synthetic_config(tmp_path)
+    config = dataclasses.replace(
+        base,
+        name="it-cadence",
+        train=dataclasses.replace(base.train, epochs=4),
+        checkpoint=CheckpointConfig(every_epochs=2, dir=str(tmp_path / "runs")),
+    )
+
+    result = run_experiment(config, logger=InMemoryLogger())
+
+    train_loader, _, _ = make_dataloaders(config)
+    steps_per_epoch = len(train_loader)
+    total_steps = config.train.epochs * steps_per_epoch
+    expected_steps = checkpoint_steps(total_steps, steps_per_epoch, every_epochs=2)
+    n = len(expected_steps)
+
+    assert len(result.train_result.checkpoint_paths) == n
+    assert len(result.frames) == n
+    assert gif_frame_count(result.artifact_paths["activation_gif"]) == n
+    assert gif_frame_count(result.artifact_paths["qi_bimodality_gif"]) == n
+
+
+def test_run_experiment_constant_schedule_pins_tau_to_tau_start(
+    tmp_path: Path,
+) -> None:
+    """A constant temp schedule keeps every history tau at tau_start (spec §4.5)."""
+    base = make_synthetic_config(tmp_path)
+    tau_start = 0.7
+    config = dataclasses.replace(
+        base,
+        name="it-constant-tau",
+        temp_schedule=TempScheduleConfig(
+            kind="constant", tau_start=tau_start, tau_end=0.01
+        ),
+    )
+
+    result = run_experiment(config, logger=InMemoryLogger())
+
+    assert result.train_result.history
+    for metric in result.train_result.history:
+        assert metric.tau == tau_start
+
+
+def test_soft_p_split_aligns_with_neuron_stats_across_sites(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """soft_p concatenation order maps 1:1 to neuron_stats (site, index) (>=2 sites).
+
+    run_experiment builds soft_p as cat([soft_sign(z).mean(0) for z in
+    pre_activations]) and hard_q from stats in the SAME global order. This pins
+    that splitting soft_p by per-site neuron counts lands on exactly the same
+    (site, index) neurons as result.neuron_stats — i.e. the soft-p / hard-q
+    cross-site ordering is consistent (capstone hardening).
+    """
+    config = synthetic_config
+    result = run_experiment(config, logger=InMemoryLogger())
+
+    stats = result.neuron_stats
+    model = result.model
+    # The model has >=2 hidden sites.
+    assert len(model.site_names) >= 2
+
+    # Reconstruct the exact soft_p run_experiment computes (same probe path, tau).
+    _, val_loader, _ = make_dataloaders(config)
+    probe_batch = make_probe_batch(
+        val_loader, config.probe.batch_size, config.probe.seed
+    )
+    final_tau = result.train_result.history[-1].tau
+    model.eval()
+    with torch.no_grad():
+        out = model(probe_batch)
+        per_site_soft = [soft_sign(z, final_tau).mean(0) for z in out.pre_activations]
+    soft_p = torch.cat(per_site_soft)
+
+    # Global ordering of stats matches the concatenation: per-site, in-index order.
+    assert len(stats) == int(soft_p.shape[0])
+    expected_order: list[tuple[str, int]] = []
+    for site, vec in zip(out.site_names, per_site_soft, strict=True):
+        expected_order.extend((site, i) for i in range(int(vec.shape[0])))
+    assert [(s.site, s.index) for s in stats] == expected_order
+
+    # Splitting soft_p by per-site neuron counts recovers each site's slice in
+    # the same (site, index) layout as neuron_stats.
+    site_widths = [int(vec.shape[0]) for vec in per_site_soft]
+    offset = 0
+    for site, width in zip(out.site_names, site_widths, strict=True):
+        site_slice = soft_p[offset : offset + width]
+        site_stats = [s for s in stats if s.site == site]
+        assert [s.index for s in site_stats] == list(range(width))
+        assert len(site_stats) == width
+        # Each split element belongs to the matching (site, index) stat position.
+        for i in range(width):
+            assert stats[offset + i].site == site
+            assert stats[offset + i].index == i
+            assert site_slice[i].item() == pytest.approx(soft_p[offset + i].item())
+        offset += width
+
+
+def test_config_from_json_builds_nested_config(tmp_path: Path) -> None:
+    """config_from_json maps a nested JSON object into an ExperimentConfig (§4.13)."""
+    payload = {
+        "name": "from-json",
+        "model": {"input_dim": 12, "hidden_dims": [8, 8], "output_dim": 3},
+        "optim": {"lr": 0.01, "weight_decay": 0.0, "name": "adam"},
+        "temp_schedule": {"kind": "exponential", "tau_start": 1.0, "tau_end": 0.1},
+        "reg": {"lam": 0.05, "entropy_eps": 1e-6},
+        "data": {"dataset": "synthetic", "batch_size": 8},
+        "surgery": {"num_k": 5, "random_baseline": True, "tie_break": "identity"},
+        "train": {"epochs": 2, "seed": 0, "device": "cpu"},
+    }
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(payload))
+
+    config = config_from_json(path)
+
+    assert config.name == "from-json"
+    assert config.model.input_dim == 12
+    assert config.model.hidden_dims == (8, 8)  # JSON array coerced to tuple
+    assert config.optim.lr == 0.01
+    assert config.temp_schedule.kind == "exponential"
+    assert config.reg.lam == 0.05
+    assert config.data.dataset == "synthetic"
+    assert config.data.batch_size == 8
+    assert config.surgery.num_k == 5
+    assert config.train.epochs == 2
+
+
+def test_config_from_json_missing_section_uses_defaults(tmp_path: Path) -> None:
+    """Sections absent from the JSON fall back to ExperimentConfig() defaults."""
+    path = tmp_path / "minimal.json"
+    path.write_text(json.dumps({"name": "minimal"}))
+
+    config = config_from_json(path)
+    default = ExperimentConfig()
+
+    assert config.name == "minimal"
+    assert config.model == default.model
+    assert config.optim == default.optim
+    assert config.train == default.train
+
+
+def test_config_from_json_coerces_wandb_tags_and_default_hidden_dims(
+    tmp_path: Path,
+) -> None:
+    """The wandb section's tags array becomes a tuple; model without hidden_dims works."""
+    payload = {
+        "model": {"input_dim": 12, "output_dim": 3},  # no hidden_dims -> default
+        "wandb": {
+            "project": "p",
+            "entity": None,
+            "mode": "disabled",
+            "group": None,
+            "tags": ["a", "b"],
+        },
+    }
+    path = tmp_path / "wandb.json"
+    path.write_text(json.dumps(payload))
+
+    config = config_from_json(path)
+
+    assert config.model.input_dim == 12
+    assert config.model.hidden_dims == ExperimentConfig().model.hidden_dims
+    assert config.wandb.tags == ("a", "b")  # JSON array coerced to tuple
+
+
+def test_cli_module_help_runs() -> None:
+    """`python -m kill_nonlinearities.experiments.run --help` exits 0 (§4.13 CLI)."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "kill_nonlinearities.experiments.run", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "Run a Phase-1a experiment." in proc.stdout

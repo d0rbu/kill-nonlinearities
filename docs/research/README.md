@@ -7,8 +7,10 @@ running **experiment log**. It doubles as the lab notebook: the formal method li
 at the top; what we actually learn from experiments accumulates in
 [Experiment log](#experiment-log) below.
 
-> **Status:** method specified; no experiments run yet. This document describes the
-> *intended* method — it is a design, not a report of results.
+> **Status:** Phase 1a **in progress** — the regularizer, training, analysis, and
+> masked-activation surgery are implemented (see the
+> [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md)). Real
+> MNIST/CIFAR results land in the [experiment log](#experiment-log) as runs complete.
 
 ---
 
@@ -164,10 +166,10 @@ is an *unstable* equilibrium with zero entropy gradient (see failure modes).
 
 ## From consistency to elimination
 
-> **Scope note.** The near-term work is **analysis-first** (phase 1): implement the
-> regularizer and *measure* how sign-consistent the network becomes and at what cost. The
-> actual network surgery below is **phase 2 (future)** — described here so the end-to-end
-> story is on record. See the [roadmap](#roadmap).
+> **Scope note.** Phase 1a is **analysis-first plus masked-activation surgery**: we implement
+> the regularizer, *measure* sign-consistency and its cost, and perform surgery by flipping a
+> neuron's activation **mode** (not by folding linear layers). **Linear-folding / structural
+> pruning remains a later phase** — see the [roadmap](#roadmap).
 
 After training, evaluate the **hard** fraction-positive of each neuron over a held-out set
 of $M$ inputs:
@@ -176,16 +178,44 @@ $$q_i = \frac{1}{M}\sum_{m=1}^{M} \mathbb{1}[\,z_i(x_m) > 0\,].$$
 
 Pick a tolerance $\varepsilon$ and classify:
 
-| Condition | Meaning | Action (phase 2) |
+| Condition | Meaning | Action (masked surgery) |
 | --- | --- | --- |
-| $q_i \ge 1-\varepsilon$ | consistently **positive** (ReLU ≈ identity) | replace ReLU with an identity **passthrough** → unit becomes linear |
-| $q_i \le \varepsilon$ | consistently **negative** (ReLU ≈ 0) | unit is **dead** → prune it |
-| otherwise | genuinely nonlinear | keep the ReLU |
+| $q_i \ge 1-\varepsilon$ | consistently **positive** (ReLU ≈ identity) | set mode to `IDENTITY` → passthrough, unit becomes linear |
+| $q_i \le \varepsilon$ | consistently **negative** (ReLU ≈ 0) | set mode to `ZERO` → unit is **dead** (outputs 0) |
+| otherwise | genuinely nonlinear | keep `RELU` |
 
-Once units are linearized, consecutive linear maps can be **folded**: for adjacent linear
-layers, $W_2(W_1 x + b_1) + b_2 = (W_2 W_1)x + (W_2 b_1 + b_2)$. Folding plus pruning yields
-a smaller, partially-linear network. The phase-2 deliverable is to perform this surgery and
-measure how much accuracy is retained.
+**Masked-activation surgery (what phase 1a does).** Rather than rewriting weights, we set a
+per-neuron **mode** on a `SelectiveReLU`: an always-negative neuron ($q_i \le \varepsilon$) is
+set to `ZERO` (its output is forced to 0, exactly as its ReLU already produced), and an
+always-positive neuron ($q_i \ge 1-\varepsilon$) is set to `IDENTITY` (passthrough, linearizing
+the unit). Genuinely nonlinear neurons keep `RELU`. The forward pass and weights are otherwise
+untouched, so this is a clean, reversible measurement of *how much* nonlinearity was
+unnecessary. **Linear folding** — collapsing $W_2(W_1 x + b_1) + b_2 = (W_2 W_1)x + (W_2 b_1 +
+b_2)$ across adjacent linearized layers — and structural width pruning are deferred to a later
+phase; phase 1a measures the accuracy-vs-k trade-off of masking alone.
+
+### Selection-set-only losslessness
+
+Masking a neuron is **exactly lossless only when its hard sign-entropy is truly zero** — i.e.
+$q_i$ is **exactly** 0 or 1 (using the strict $z > 0$ predicate) on the set it was measured on.
+A $q=0$ neuron set to `ZERO` is lossless even if some $z = 0$ in the batch (because
+$\mathrm{ReLU}(0) = 0$); a $q=1$ neuron set to `IDENTITY` requires **all** $z > 0$ strictly. For
+selected neurons with *interior* $q$ (chosen by how far down the ascending-entropy ranking we
+cut), masking changes the logits, and the **accuracy-vs-k** curve measures that loss by design.
+Crucially the guarantee is **on the selection set only**: held-out (test) inputs may push a
+"consistent" neuron across zero, which is exactly why we report the val-vs-test accuracy-vs-k
+gap.
+
+### Gradient safety: the loss clamps p
+
+The entropy's forward value is exactly 0 at $p \in \{0, 1\}$, but its derivative
+$\mathrm{d}H/\mathrm{d}p = \log\frac{1-p}{p}$ diverges there. As $\tau$ anneals low, the soft
+$p_i$ of a sign-consistent neuron saturates to *exactly* 0 or 1 in float32, so a naive
+`loss.backward()` would inject NaN — destroying the model precisely when it succeeds.
+Therefore the **loss** clamps $p$ into $[\varepsilon, 1-\varepsilon]$ before computing entropy
+(clamp's backward is 0 outside the range, so saturated neurons get a finite zero gradient).
+The `binary_entropy` function itself stays **unclamped** — the honest math — and is used by
+**analysis** on the hard $q$ under `no_grad`, where the endpoint gradient never arises.
 
 ## What we measure (phase 1)
 
@@ -213,25 +243,120 @@ measure how much accuracy is retained.
 
 ## Roadmap
 
-Tracked work, roughly in order. (Once a GitHub remote exists, these become issues — see
-[contributing](../development/contributing.md).)
+Tracked work, roughly in order. (File these as GitHub issues — see
+[contributing](../development/contributing.md#roadmap--issues).)
 
-- [x] **Phase 0 — scaffold.** Tooling, test harness, docs (this repo, now).
-- [ ] **Phase 1a — regularizer + analysis on a toy MLP** (MNIST/CIFAR). Implement
-  $\mathcal{L}_{\text{reg}}$, sweep $\lambda$, produce the trade-off curve and $q_i$
-  histograms. Models emit their own pre-activations (see
-  [architecture](../architecture/overview.md)).
-- [ ] **Phase 1b — small transformer (language modeling).** Apply the same regularizer to
-  the MLP/FFN blocks of a small transformer.
-- [ ] **Phase 2 — surgery.** Replace/prune/fold eliminable units and measure retained
-  accuracy.
+- [x] **Phase 0 — scaffold.** Tooling, test harness, docs (this repo).
+- [~] **Phase 1a — regularizer + analysis + masked surgery on a toy MLP** (MNIST/CIFAR).
+  *In progress.* $\mathcal{L}_{\text{reg}}$, τ-annealing, λ-sweep via wandb Sweeps, the
+  trade-off curve, $q_i$ histograms, and masked-activation surgery (accuracy-vs-k on val+test)
+  are implemented per the [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md).
+  Models emit their own pre-activations (see [architecture](../architecture/overview.md)).
+- [ ] **Phase 1b — small transformer (language modeling).** Apply the same regularizer to the
+  MLP/FFN blocks of a small transformer.
+- [ ] **Phase 2 — structural surgery.** Fold linearized layers and prune dead units; measure
+  retained accuracy. (Phase 1a already does the *masked* form.)
 
 ## Experiment log
 
 > Newest entries on top. Each entry: date, what was tried, config (λ, τ schedule, model,
 > data), result, and takeaway. Keep findings here so knowledge accumulates in one place.
 
-_No experiments run yet._
+### 2026-06-09 — MNIST λ trade-off sweep (offline, 5 strengths)
+- **Setup:** same MNIST ReLUMLP (784→256→256→10, 512 hidden neurons) / Adam lr 1e-3 / τ
+  exponential 1.0→0.1 / 8 epochs / seed 0 / CPU, swept λ ∈ {0, 0.01, 0.05, 0.1, 0.2} offline
+  via [`scripts/lambda_sweep.py`](../../scripts/lambda_sweep.py).
+- **Result:** accuracy stays ~flat across the whole range while the count of sign-consistent
+  neurons climbs steeply with λ:
+
+  | λ | val acc | test acc | eliminable (q∈{0,1}) | H(q) < 0.05 nats |
+  | --- | --- | --- | --- | --- |
+  | 0.0 | 0.9762 | 0.9794 | 18 | 27 |
+  | 0.01 | 0.9737 | 0.9763 | 45 | 47 |
+  | 0.05 | 0.9778 | 0.9791 | 51 | 86 |
+  | 0.1 | 0.9775 | 0.9766 | 73 | 226 |
+  | 0.2 | 0.9715 | 0.9716 | 104 | 337 |
+
+  ![λ trade-off](assets/lambda_sweep.png)
+- **Takeaway:** the regularizer buys a large increase in removable/near-linear capacity for a
+  tiny accuracy cost — **exactly-eliminable neurons grow 18 → 104 (≈6×)** and near-consistent
+  (H < 0.05 nats) neurons grow **27 → 337 (~⅔ of the network)** from λ=0 to 0.2, while accuracy
+  drops only ~0.5% (val 0.9762 → 0.9715). Even the unregularized baseline (λ=0) already has 18
+  dead neurons. **λ≈0.1 looks like the sweet spot** (73 exactly-eliminable / 226 low-entropy at
+  no measurable accuracy cost). Accuracy is mildly non-monotonic at small λ (single seed —
+  training noise). Next: the same sweep on CIFAR-10, and multi-seed runs to tighten the band.
+
+### 2026-06-08 — MNIST λ>0 baseline (regularizer + masked surgery)
+- **Setup:** ReLUMLP (784→256→256→10, 512 hidden neurons) / MNIST / λ=0.05 / τ exponential
+  1.0→0.1 / Adam lr 1e-3 / 8 epochs / seed 0 / CPU. Config:
+  [`configs/mnist.json`](../../configs/mnist.json). Run offline with `mode="disabled"`:
+  `uv run python -m kill_nonlinearities.experiments.run --config configs/mnist.json`.
+- **Result:** val acc **0.9778**, test acc **0.9791** (k=0, the untouched model). The
+  regularizer drove the mean per-site sign-entropy down over training (final
+  $\mathcal{L}_{\text{reg}}=0.392$). Of the 512 neurons, **51 reached exact $q=0$** (all dead;
+  none hit $q=1$ at this λ) — the lossless-prefix marker — and **86 had sign-entropy < 0.05
+  nats**. Masking those 51 via `ZERO` is **bit-exactly lossless on the selection set**: the
+  acc-vs-k curve is flat (val 0.9778, test 0.9791) through k=51 and stays ≥ 0.977 through
+  k≈128, then degrades smoothly (k=205: val 0.974; k=256: val 0.9522; all-512-masked collapses
+  to ~0.30, chance-ish). The **entropy ranking dominates the random baseline** across the
+  mid-range (k=256: 0.9522 vs 0.8162 random; k=179: 0.9775 vs 0.9440), confirming low-entropy
+  neurons really are the cheap-to-remove ones. Val and test curves track within ~1% everywhere
+  (small generalization gap).
+- **Plots** (committed under [`assets/mnist-lambda/`](assets/mnist-lambda/); the
+  9-frame `activation.gif` and `qi_bimodality.gif` are there too, plus regenerable in
+  `runs/mnist-lambda/`):
+
+  | Accuracy vs. surgery *k* (entropy vs. random) | Soft `pᵢ` vs. hard `qᵢ` |
+  | --- | --- |
+  | ![accuracy vs k](assets/mnist-lambda/acc_vs_k.png) | ![soft vs hard](assets/mnist-lambda/soft_vs_hard.png) |
+
+  | Mean pre-activation per neuron | Sign-entropy per neuron (sorted) |
+  | --- | --- |
+  | ![mean pre-activation](assets/mnist-lambda/mean_pre_dist.png) | ![sign-entropy map](assets/mnist-lambda/entropy_map.png) |
+
+  | Training losses (task / reg / total) | Per-layer mean sign-entropy |
+  | --- | --- |
+  | ![loss curves](assets/mnist-lambda/loss_curves.png) | ![per-layer entropy](assets/mnist-lambda/per_layer_entropy.png) |
+- **Takeaway:** at λ=0.05 about **10% of neurons (51/512) are exactly removable with zero
+  accuracy cost**, and ~25–40% can be masked for a few points of accuracy — the entropy
+  ranking is the right knob (it beats random masking by a wide margin mid-curve). At this λ the
+  pressure produced dead ($q=0$) units rather than passthrough ($q=1$) ones. Next: sweep λ to
+  push more neurons to the endpoints and grow the bimodal $q_i$ split, and run the deeper
+  CIFAR-10 MLP.
+
+### 2026-06-09 — CIFAR-10 λ>0 (regularizer + masked surgery)
+- **Setup:** ReLUMLP (3072→256→256→10, 512 hidden neurons) / CIFAR-10 / λ=0.05 / τ exponential
+  1.0→0.1 / Adam lr 1e-3 / 10 epochs / seed 0 / CPU. Config:
+  [`configs/cifar10.json`](../../configs/cifar10.json). Run offline:
+  `uv run python -m kill_nonlinearities.experiments.run --config configs/cifar10.json`.
+- **Result:** val acc **0.5058**, test acc **0.5195** (k=0) — the expected ceiling for a flat MLP
+  on CIFAR-10. Of 512 neurons, **55 reached exact $q\in\{0,1\}$** (the lossless prefix) and **76
+  had sign-entropy < 0.05 nats** — *comparable sign-consistency to MNIST at the same λ, on a much
+  harder task.* Masking the 55 entropy-0 neurons is bit-exactly lossless on the selection set;
+  accuracy holds (~0.51) through k≈100 then degrades. The entropy ranking dominates the random
+  baseline in the accuracy-preserving low-/mid-k regime (e.g. k≈150: ~0.49 val vs ~0.41 random),
+  but the curves **cross at high k** (k≳250 random edges ahead) — there entropy-order is forced to
+  convert the genuinely-nonlinear, high-entropy neurons it kept for last, and both collapse toward
+  chance (~0.14) as k→512. Unlike MNIST, the per-neuron mean-pre-activation histograms are
+  unimodal (negative-shifted), not cleanly bimodal — less clean dead/passthrough specialization on
+  the harder task. Plots:
+
+  | Accuracy vs. *k* (val / test / random) | Sign-entropy per neuron |
+  | --- | --- |
+  | ![cifar accuracy vs k](assets/cifar10-lambda/acc_vs_k.png) | ![cifar sign-entropy](assets/cifar10-lambda/entropy_map.png) |
+
+  | Mean pre-activation per neuron | Soft `pᵢ` vs. hard `qᵢ` |
+  | --- | --- |
+  | ![cifar mean pre-activation](assets/cifar10-lambda/mean_pre_dist.png) | ![cifar soft vs hard](assets/cifar10-lambda/soft_vs_hard.png) |
+
+  (Full set incl. loss curves + the two GIFs under
+  [`assets/cifar10-lambda/`](assets/cifar10-lambda/).)
+- **Takeaway:** the method **transfers to CIFAR-10** — a similar count of sign-consistent neurons
+  (55 exactly-eliminable), and the lossless-prefix + entropy-beats-random story holds in the
+  accuracy-preserving regime, just at the MLP's ~52% ceiling. The high-*k* entropy/random crossing
+  is sharper than on MNIST. For an online run / hyperparameter sweep with wandb, set
+  `"mode": "online"` in the config (`uv run wandb login` first) and use
+  [`scripts/launch_sweep.py`](../../scripts/launch_sweep.py).
 
 ```
 ### YYYY-MM-DD — <one-line title>
