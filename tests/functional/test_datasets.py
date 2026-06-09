@@ -4,6 +4,9 @@ Tests use ONLY the synthetic provider — no network, no torchvision download.
 Determinism follows the spec §8 recipe (seeded generators, num_workers=0).
 """
 
+import dataclasses
+
+import pytest
 import torch
 from torch import Tensor
 
@@ -161,3 +164,13 @@ def test_val_keeps_all_samples_drop_last_false() -> None:
     _, val, _ = make_dataloaders(config)
     n_seen = sum(x.shape[0] for x, _ in val)
     assert n_seen == len(val.dataset)  # ty: ignore[invalid-argument-type]
+
+
+def test_make_dataloaders_unknown_dataset_raises() -> None:
+    """An unknown dataset name raises ValueError before any download (offline)."""
+    config = _synthetic_config()
+    bad = dataclasses.replace(
+        config, data=dataclasses.replace(config.data, dataset="imagenet")
+    )
+    with pytest.raises(ValueError, match="unknown dataset"):
+        make_dataloaders(bad)

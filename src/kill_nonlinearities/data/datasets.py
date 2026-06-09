@@ -3,11 +3,33 @@
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
+from torchvision import transforms
+from torchvision.datasets import CIFAR10, MNIST
 
 from kill_nonlinearities.config import ExperimentConfig
 
 _SYNTHETIC_TRAIN_SIZE = 256
 _SYNTHETIC_TEST_SIZE = 64
+
+_NORMALIZE = {
+    "mnist": ((0.1307,), (0.3081,)),
+    "cifar10": (
+        (0.4914, 0.4822, 0.4465),
+        (0.2470, 0.2435, 0.2616),
+    ),
+}
+
+
+def build_transform(dataset: str) -> transforms.Compose:
+    """ToTensor + per-dataset Normalize, with NO train-time augmentation ``[R30]``.
+
+    The same deterministic transform is used for train/val/test so only seeded
+    shuffling and initialization remain stochastic.
+    """
+    if dataset not in _NORMALIZE:
+        raise ValueError(f"unknown dataset {dataset!r}")
+    mean, std = _NORMALIZE[dataset]
+    return transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, std)])
 
 
 def _make_synthetic_split(
@@ -40,6 +62,22 @@ def _build_train_and_test(config: ExperimentConfig) -> tuple[Dataset, Dataset]:
             input_dim=config.model.input_dim,
             output_dim=config.model.output_dim,
             generator=gen,
+        )
+        return train, test
+    if dataset in {"mnist", "cifar10"}:  # pragma: no cover - network download
+        transform = build_transform(dataset)
+        dataset_cls = MNIST if dataset == "mnist" else CIFAR10
+        train = dataset_cls(
+            root=config.data.data_dir,
+            train=True,
+            download=True,
+            transform=transform,
+        )
+        test = dataset_cls(
+            root=config.data.data_dir,
+            train=False,
+            download=True,
+            transform=transform,
         )
         return train, test
     raise ValueError(f"unknown dataset {dataset!r}")

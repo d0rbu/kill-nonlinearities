@@ -119,3 +119,30 @@ def test_make_probe_batch_clamps_to_dataset_size() -> None:
     n = len(val.dataset)  # ty: ignore[invalid-argument-type]
     batch = make_probe_batch(val, size=n + 1000, seed=0)
     assert batch.shape[0] == n
+
+
+import pytest  # noqa: E402
+
+from kill_nonlinearities.data.datasets import (  # noqa: E402
+    build_transform,
+)
+
+
+def test_build_transform_mnist_has_no_augmentation() -> None:
+    """MNIST transform is exactly ToTensor + Normalize (no random augmentation)."""
+    transform = build_transform("mnist")
+    names = [type(t).__name__ for t in transform.transforms]
+    assert names == ["ToTensor", "Normalize"]
+
+
+def test_build_transform_cifar10_has_no_augmentation() -> None:
+    """CIFAR-10 transform is exactly ToTensor + Normalize (no random augmentation)."""
+    transform = build_transform("cifar10")
+    names = [type(t).__name__ for t in transform.transforms]
+    assert names == ["ToTensor", "Normalize"]
+
+
+def test_build_transform_unknown_dataset_raises() -> None:
+    """An unknown dataset name raises ValueError from build_transform."""
+    with pytest.raises(ValueError, match="unknown dataset"):
+        build_transform("imagenet")
