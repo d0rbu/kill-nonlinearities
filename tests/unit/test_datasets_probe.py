@@ -1,5 +1,6 @@
 """Unit tests for probe selection determinism (spec §4.9, §7 probe fixity)."""
 
+import torch
 
 from kill_nonlinearities.config import ModelConfig
 from kill_nonlinearities.data.datasets import select_probe_neurons
@@ -55,3 +56,66 @@ def test_select_probe_neurons_clamps_to_total_neurons() -> None:
     total = 2 + 2
     assert len(selected) == total
     assert len(set(selected)) == total
+
+
+from kill_nonlinearities.config import (  # noqa: E402  (grouped with module imports above)
+    DataConfig,
+    ExperimentConfig,
+    ProbeConfig,
+)
+from kill_nonlinearities.data.datasets import (  # noqa: E402
+    make_dataloaders,
+    make_probe_batch,
+)
+
+
+def _probe_config() -> ExperimentConfig:
+    """Synthetic config with a small probe batch (no network)."""
+    return ExperimentConfig(
+        name="probe-test",
+        model=ModelConfig(input_dim=12, hidden_dims=(8, 6), output_dim=3),
+        data=DataConfig(
+            dataset="synthetic",
+            batch_size=8,
+            eval_batch_size=16,
+            val_fraction=0.2,
+            split_seed=0,
+            num_workers=0,
+        ),
+        probe=ProbeConfig(num_neurons=4, seed=0, batch_size=10),
+    )
+
+
+def test_make_probe_batch_is_deterministic() -> None:
+    """Same loader + size + seed → byte-identical probe batch (probe fixity)."""
+    _, val, _ = make_dataloaders(_probe_config())
+    a = make_probe_batch(val, size=10, seed=0)
+    b = make_probe_batch(val, size=10, seed=0)
+    assert torch.equal(a, b)
+
+
+def test_make_probe_batch_shape_and_dtype() -> None:
+    """Probe batch is [size, input_dim] float32 inputs only (no labels)."""
+    config = _probe_config()
+    _, val, _ = make_dataloaders(config)
+    batch = make_probe_batch(val, size=10, seed=0)
+    assert isinstance(batch, torch.Tensor)
+    assert batch.shape == (10, config.model.input_dim)
+    assert batch.dtype == torch.float32
+
+
+def test_make_probe_batch_changes_with_seed() -> None:
+    """A different seed selects a different (non-degenerate) probe batch."""
+    _, val, _ = make_dataloaders(_probe_config())
+    assert not torch.equal(
+        make_probe_batch(val, size=10, seed=0),
+        make_probe_batch(val, size=10, seed=1),
+    )
+
+
+def test_make_probe_batch_clamps_to_dataset_size() -> None:
+    """Requesting more than the dataset holds returns all of it, no error."""
+    _, val, _ = make_dataloaders(_probe_config())
+    n = len(val.dataset)  # ty: ignore[invalid-argument-type]
+    batch = make_probe_batch(val, size=n + 1000, seed=0)
+    assert batch.shape[0] == n

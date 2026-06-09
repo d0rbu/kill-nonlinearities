@@ -1,6 +1,7 @@
 """Dataset providers, deterministic dataloaders, and probe selection (spec §4.9)."""
 
 import torch
+from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
 
 from kill_nonlinearities.config import ExperimentConfig
@@ -112,3 +113,21 @@ def select_probe_neurons(model: object, num: int, seed: int) -> list[tuple[str, 
     gen.manual_seed(seed)
     order = torch.randperm(len(all_pairs), generator=gen).tolist()
     return [all_pairs[i] for i in order[:count]]
+
+
+def make_probe_batch(loader: DataLoader, size: int, seed: int) -> Tensor:
+    """Return a fixed, seeded batch of ``size`` inputs from ``loader``'s dataset (spec §4.9).
+
+    Inputs only (no labels), flattened to ``[size, input_dim]``. Deterministic in
+    ``seed`` and identical across calls / checkpoints / sweep runs ``[R25]`` so a
+    probe GIF reflects weight evolution only. If ``size`` exceeds the dataset, all
+    samples are returned.
+    """
+    dataset = loader.dataset
+    n = len(dataset)  # ty: ignore[invalid-argument-type]
+    count = min(size, n)
+    gen = torch.Generator()
+    gen.manual_seed(seed)
+    order = torch.randperm(n, generator=gen)[:count].tolist()
+    inputs = [torch.as_tensor(dataset[i][0]).flatten() for i in order]
+    return torch.stack(inputs)
