@@ -37,6 +37,15 @@ class SelectiveReLU(nn.Module):
         )
 
     def set_modes(self, modes: Tensor) -> None:
+        expected_shape = (self.num_features,)
+        if tuple(modes.shape) != expected_shape:
+            raise ValueError(
+                f"modes shape must be {expected_shape}, got {tuple(modes.shape)}"
+            )
+        if modes.dtype != torch.int64:
+            raise ValueError(f"modes dtype must be int64, got {modes.dtype}")
+        if bool(((modes < 0) | (modes > int(ActivationMode.IDENTITY))).any()):
+            raise ValueError("modes values must each be one of 0, 1, 2")
         self.mode.copy_(modes)
 
     def reset(self) -> None:

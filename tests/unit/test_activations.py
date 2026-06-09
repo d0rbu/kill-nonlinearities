@@ -1,6 +1,6 @@
 """Unit tests for ActivationMode + SelectiveReLU (spec §4.2, §6 I1)."""
 
-import pytest  # noqa: F401  # used by validation tests added in Task 2.3
+import pytest
 import torch
 
 from kill_nonlinearities.models.activations import ActivationMode, SelectiveReLU
@@ -94,3 +94,34 @@ def test_reset_restores_all_relu() -> None:
     act.set_modes(torch.tensor([1, 2, 1], dtype=torch.int64))
     act.reset()
     assert torch.equal(act.mode, torch.zeros(3, dtype=torch.int64))
+
+
+def test_set_modes_accepts_valid_full_width_int64() -> None:
+    """A valid [N] int64 tensor with values in {0,1,2} is accepted and stored."""
+    act = SelectiveReLU(num_features=3)
+    modes = torch.tensor([0, 1, 2], dtype=torch.int64)
+    act.set_modes(modes)
+    assert torch.equal(act.mode, modes)
+
+
+def test_set_modes_rejects_wrong_shape() -> None:
+    """A modes tensor that is not exactly (num_features,) raises ValueError."""
+    act = SelectiveReLU(num_features=3)
+    with pytest.raises(ValueError, match="shape"):
+        act.set_modes(torch.zeros(4, dtype=torch.int64))
+
+
+def test_set_modes_rejects_wrong_dtype() -> None:
+    """A non-int64 modes tensor raises ValueError."""
+    act = SelectiveReLU(num_features=3)
+    with pytest.raises(ValueError, match="int64"):
+        act.set_modes(torch.zeros(3, dtype=torch.int32))
+
+
+def test_set_modes_rejects_out_of_range_values() -> None:
+    """Values outside {0, 1, 2} raise ValueError."""
+    act = SelectiveReLU(num_features=3)
+    with pytest.raises(ValueError, match="0, 1, 2"):
+        act.set_modes(torch.tensor([0, 3, 1], dtype=torch.int64))
+    with pytest.raises(ValueError, match="0, 1, 2"):
+        act.set_modes(torch.tensor([-1, 0, 1], dtype=torch.int64))
