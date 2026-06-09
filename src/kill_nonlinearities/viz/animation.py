@@ -18,7 +18,7 @@ import numpy as np
 
 from kill_nonlinearities.analysis.statistics import FrameStats
 
-__all__ = ["gif_frame_count", "render_activation_gif"]
+__all__ = ["gif_frame_count", "render_activation_gif", "render_qi_bimodality_gif"]
 
 
 def _figure_to_rgb(fig: plt.Figure) -> np.ndarray:
@@ -56,6 +56,31 @@ def render_activation_gif(frames: Sequence[FrameStats], path: Path) -> Path:
             ax.set_title(f"{key[0]}[{key[1]}]")
             ax.set_xlabel("pre-activation")
         fig.suptitle(f"step {frame.step}")
+        fig.tight_layout()
+        images.append(_figure_to_rgb(fig))
+        plt.close(fig)
+    iio.imwrite(path, np.stack(images), plugin="pillow", extension=".gif")
+    return path
+
+
+def render_qi_bimodality_gif(frames: Sequence[FrameStats], path: Path) -> Path:
+    """Animate the histogram of hard q_i over checkpoints to show bimodality (§5).
+
+    All sites' q_i are pooled into one histogram per frame on a fixed [0, 1] range
+    so the drift toward q in {0, 1} (sign consistency) is visible. One gif frame
+    per ``FrameStats``. Takes a full file ``path`` and returns it.
+    """
+    images: list[np.ndarray] = []
+    for frame in frames:
+        pooled: list[float] = []
+        for q in frame.q_by_site.values():
+            pooled.extend(q.detach().cpu().tolist())
+        fig, ax = plt.subplots()
+        ax.hist(pooled, bins=20, range=(0.0, 1.0))
+        ax.set_xlim(0.0, 1.0)
+        ax.set_xlabel("hard q_i")
+        ax.set_ylabel("count")
+        ax.set_title(f"q_i distribution — step {frame.step}")
         fig.tight_layout()
         images.append(_figure_to_rgb(fig))
         plt.close(fig)
