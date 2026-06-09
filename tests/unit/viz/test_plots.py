@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import matplotlib
+import torch
 
 from kill_nonlinearities.analysis.statistics import NeuronStats
 from kill_nonlinearities.surgery.apply import KPoint
@@ -74,6 +75,18 @@ def test_plot_per_layer_entropy_writes_nonempty_file(tmp_path: Path) -> None:
     """plot_per_layer_entropy writes a non-empty bar chart, one value per layer (§5)."""
     out = tmp_path / "per_layer_entropy.png"
     result = plots.plot_per_layer_entropy(_toy_stats(), out)
+
+    assert result == out
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+def test_plot_soft_vs_hard_writes_nonempty_file(tmp_path: Path) -> None:
+    """plot_soft_vs_hard writes a non-empty scatter of soft p vs hard q (spec §5)."""
+    out = tmp_path / "soft_vs_hard.png"
+    soft = torch.tensor([0.01, 0.5, 0.99, 0.3])
+    hard = torch.tensor([0.0, 0.5, 1.0, 0.25])
+    result = plots.plot_soft_vs_hard(soft, hard, out)
 
     assert result == out
     assert out.exists()

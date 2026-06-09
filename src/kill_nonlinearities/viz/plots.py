@@ -14,6 +14,7 @@ import matplotlib
 matplotlib.use("Agg")  # must precede the pyplot import below (spec §4.12)
 
 import matplotlib.pyplot as plt
+from torch import Tensor
 
 from kill_nonlinearities.analysis.statistics import NeuronStats
 from kill_nonlinearities.surgery.apply import KPoint
@@ -25,6 +26,7 @@ __all__ = [
     "plot_loss_curves",
     "plot_mean_pre_dist",
     "plot_per_layer_entropy",
+    "plot_soft_vs_hard",
 ]
 
 
@@ -172,6 +174,26 @@ def plot_acc_vs_k(
     file ``path`` and returns it after saving.
     """
     fig, _ = _build_acc_vs_k_axes(k_points, random_k_points, total, lossless_prefix)
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_soft_vs_hard(soft_p: Tensor, hard_q: Tensor, path: Path) -> Path:
+    """Scatter of soft p_i (final tau) vs hard q_i with the y=x line (spec §5, [R3]).
+
+    Validates that tau-annealing delivered hard sign consistency. Takes a full
+    file ``path`` and returns it after saving.
+    """
+    soft = soft_p.detach().cpu().tolist()
+    hard = hard_q.detach().cpu().tolist()
+    fig, ax = plt.subplots()
+    ax.scatter(hard, soft, alpha=0.6)
+    ax.plot([0.0, 1.0], [0.0, 1.0], color="grey", linestyle="--", label="y = x")
+    ax.set_xlabel("hard q_i  (z > 0 fraction)")
+    ax.set_ylabel("soft p_i  (sigmoid(z / tau) mean)")
+    ax.set_title("Soft vs hard fraction-positive")
+    ax.legend()
     fig.savefig(path)
     plt.close(fig)
     return path
