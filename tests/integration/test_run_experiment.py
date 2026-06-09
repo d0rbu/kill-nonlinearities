@@ -1,13 +1,20 @@
 """Integration tests for run_experiment (spec §4.13, §5, §7)."""
 
+import copy
 import dataclasses
 import importlib
 import math
 from pathlib import Path
 
 import pytest
+import torch
 
-from kill_nonlinearities.analysis.selection import make_k_grid
+from kill_nonlinearities.analysis.selection import (
+    assign_modes,
+    make_k_grid,
+    rank_by_entropy,
+    select_topk,
+)
 from kill_nonlinearities.config import (
     CheckpointConfig,
     DataConfig,
@@ -23,6 +30,8 @@ from kill_nonlinearities.config import (
 )
 from kill_nonlinearities.data.datasets import make_dataloaders
 from kill_nonlinearities.experiments.run import ExperimentResult, run_experiment
+from kill_nonlinearities.models.activations import ActivationMode
+from kill_nonlinearities.surgery.apply import apply_modes
 from kill_nonlinearities.training.logging import InMemoryLogger
 from kill_nonlinearities.training.schedule import checkpoint_steps
 from kill_nonlinearities.viz import plots as viz_plots
@@ -230,3 +239,37 @@ def test_acc_vs_k_axes_data_equals_k_points(
         ]
     finally:
         viz_plots.plt.close(fig)
+
+
+def test_k_equals_total_converts_all_neurons_and_logits_finite(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """At k == total every neuron is converted (no RELU left) and logits are finite."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    model = result.model
+    stats = result.neuron_stats
+    total = len(stats)
+    ranked = rank_by_entropy(stats)
+
+    work = copy.deepcopy(model)
+    widths = {
+        site: int(act.mode.shape[0])
+        for site, act in zip(model.site_names, model.activations, strict=True)
+    }
+    modes = assign_modes(
+        select_topk(ranked, total), tie_break="identity", widths=widths
+    )
+    apply_modes(work, modes)
+
+    # Every neuron has been converted away from RELU (no mode == RELU remains).
+    relu = int(ActivationMode.RELU)
+    for act in work.activations:
+        assert not bool((act.mode == relu).any())
+
+    # Logits over a probe input are finite.
+    probe = torch.randn(5, synthetic_config.model.input_dim)
+    work.eval()
+    with torch.no_grad():
+        logits = work(probe).logits
+    assert torch.isfinite(logits).all()
