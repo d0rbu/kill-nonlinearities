@@ -25,6 +25,7 @@ from kill_nonlinearities.data.datasets import make_dataloaders
 from kill_nonlinearities.experiments.run import ExperimentResult, run_experiment
 from kill_nonlinearities.training.logging import InMemoryLogger
 from kill_nonlinearities.training.schedule import checkpoint_steps
+from kill_nonlinearities.viz import plots as viz_plots
 from kill_nonlinearities.viz.animation import gif_frame_count
 
 
@@ -197,3 +198,35 @@ def test_both_gifs_have_one_frame_per_checkpoint(
     assert len(result.frames) == n_checkpoints
     assert gif_frame_count(result.artifact_paths["activation_gif"]) == n_checkpoints
     assert gif_frame_count(result.artifact_paths["qi_bimodality_gif"]) == n_checkpoints
+
+
+def test_acc_vs_k_axes_data_equals_k_points(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """The acc-vs-k figure's val/test line ydata equals the k_sweep accuracies ([R23])."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    total = len(result.neuron_stats)
+    lossless_prefix = sum(1 for s in result.neuron_stats if s.q in (0.0, 1.0))
+    fig, ax = viz_plots._build_acc_vs_k_axes(
+        result.k_points, result.random_k_points, total, lossless_prefix
+    )
+    try:
+        lines = ax.get_lines()
+        val_line = next(
+            line for line in lines if line.get_label() == "val (entropy order)"
+        )
+        test_line = next(
+            line for line in lines if line.get_label() == "test (entropy order)"
+        )
+        assert list(val_line.get_xdata()) == [  # ty: ignore[invalid-argument-type]
+            kp.k for kp in result.k_points
+        ]
+        assert list(val_line.get_ydata()) == [  # ty: ignore[invalid-argument-type]
+            kp.val_acc for kp in result.k_points
+        ]
+        assert list(test_line.get_ydata()) == [  # ty: ignore[invalid-argument-type]
+            kp.test_acc for kp in result.k_points
+        ]
+    finally:
+        viz_plots.plt.close(fig)
