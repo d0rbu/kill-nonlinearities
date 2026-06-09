@@ -1,5 +1,6 @@
 """Unit tests for regularization.loss (spec §4.4, §6 I3, §7, [R1])."""
 
+import pytest
 import torch
 
 from kill_nonlinearities.regularization.entropy import (
@@ -127,3 +128,9 @@ def test_per_neuron_entropy_vector_invariant_under_inverse_neuron_perm() -> None
     # per-column differences. Per §0 (and this milestone's stated convention),
     # permutation invariance is asserted via ``assert_close``, not ``torch.equal``.
     torch.testing.assert_close(permuted_vec[inv], base_vec)
+
+
+def test_sign_consistency_loss_rejects_empty_sites() -> None:
+    """An empty pre_activations sequence is a usage error (spec §7 [R22])."""
+    with pytest.raises(ValueError, match="at least one"):
+        sign_consistency_loss([], tau=1.0, eps=1e-6)

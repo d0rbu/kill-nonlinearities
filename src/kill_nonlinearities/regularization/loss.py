@@ -36,6 +36,8 @@ def sign_consistency_loss(
     Returns:
         A scalar loss tensor (mean over sites of each site's mean entropy).
     """
+    if len(pre_activations) == 0:
+        raise ValueError("sign_consistency_loss requires at least one site")
     site_entropies: list[Tensor] = []
     for z in pre_activations:
         p = batch_fraction_positive(z, tau).clamp(eps, 1.0 - eps)
