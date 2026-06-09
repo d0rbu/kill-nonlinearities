@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from kill_nonlinearities.analysis.selection import make_k_grid
 from kill_nonlinearities.config import (
     CheckpointConfig,
     DataConfig,
@@ -128,3 +129,37 @@ def test_checkpoints_land_at_expected_steps(
 
     assert len(result.train_result.checkpoint_paths) == len(expected)
     assert all(p.exists() for p in result.train_result.checkpoint_paths)
+
+
+def test_k_sweep_covers_every_grid_point_with_val_and_test(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """Each KPoint carries a finite val_acc and test_acc, one per unique k-grid point."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    total = len(result.neuron_stats)
+    expected_grid = make_k_grid(total, synthetic_config.surgery.num_k)
+
+    assert [kp.k for kp in result.k_points] == expected_grid
+    assert [kp.k for kp in result.random_k_points] == expected_grid
+    for kp in (*result.k_points, *result.random_k_points):
+        assert 0.0 <= kp.val_acc <= 1.0
+        assert 0.0 <= kp.test_acc <= 1.0
+        assert math.isfinite(kp.val_acc)
+        assert math.isfinite(kp.test_acc)
+
+
+def test_run_logs_val_acc_sweep_metric(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """run_experiment logs the 'val/acc' metric the sweep config maximizes (§4.13)."""
+    logger = InMemoryLogger()
+    run_experiment(synthetic_config, logger=logger)
+
+    logged_keys = {k for _, values in logger.scalars for k in values}
+    assert "val/acc" in logged_keys
+    val_acc_values = [
+        values["val/acc"] for _, values in logger.scalars if "val/acc" in values
+    ]
+    assert len(val_acc_values) == 1
+    assert 0.0 <= val_acc_values[0] <= 1.0
