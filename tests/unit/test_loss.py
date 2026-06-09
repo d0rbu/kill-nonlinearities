@@ -33,3 +33,30 @@ def test_sign_consistency_loss_matches_hand_computed_interior() -> None:
     expected = torch.stack([site_entropy(site_a), site_entropy(site_b)]).mean()
     out = sign_consistency_loss(pre, tau=tau, eps=eps)
     torch.testing.assert_close(out, expected)
+
+
+def test_sign_consistency_loss_finite_gradient_under_saturation() -> None:
+    """Saturating |z|/tau ~ 20 (float32) -> finite loss and finite grads ([R1], §7)."""
+    tau = 0.1
+    # |z| / tau == 20 -> sigmoid saturates to exactly 1.0 / 0.0 in float32.
+    site_a = torch.tensor(
+        [[2.0, -2.0], [2.0, -2.0], [2.0, -2.0]],
+        dtype=torch.float32,
+        requires_grad=True,
+    )
+    site_b = torch.tensor([[-2.0, 2.0, 2.0]], dtype=torch.float32, requires_grad=True)
+    loss = sign_consistency_loss([site_a, site_b], tau=tau, eps=1e-6)
+    assert torch.isfinite(loss)
+    loss.backward()
+    for site in (site_a, site_b):
+        assert site.grad is not None
+        assert torch.all(torch.isfinite(site.grad))
+
+
+def test_sign_consistency_loss_saturated_gradient_is_zero() -> None:
+    """Fully-saturated neurons get a finite ZERO gradient (clamp backward, [R1])."""
+    tau = 0.1
+    z = torch.full((4, 2), 2.0, dtype=torch.float32, requires_grad=True)
+    sign_consistency_loss([z], tau=tau, eps=1e-6).backward()
+    assert z.grad is not None
+    torch.testing.assert_close(z.grad, torch.zeros_like(z))
