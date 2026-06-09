@@ -129,11 +129,13 @@ def run_experiment(
         else []
     )
 
-    # 6. Soft p_i (final tau, on the fixed probe batch) vs hard q_i.
+    # 6. Soft p_i (final tau, on the fixed probe batch) vs hard q_i. Use the exact
+    # tau the model trained at on its final step (recorded per-step in history), so
+    # degenerate schedules (e.g. total_steps <= 1) match reality.
     final_tau = (
-        config.temp_schedule.tau_start
-        if config.temp_schedule.kind == "constant"
-        else config.temp_schedule.tau_end
+        train_result.history[-1].tau
+        if train_result.history
+        else config.temp_schedule.tau_start
     )
     model.eval()
     with torch.no_grad():
@@ -226,28 +228,24 @@ def config_from_json(path: Path) -> ExperimentConfig:
     base = ExperimentConfig()
     return ExperimentConfig(
         name=str(raw.get("name", base.name)),
-        model=_model(raw["model"]) if "model" in raw else base.model,  # type: ignore[arg-type]
-        optim=OptimConfig(**raw["optim"]) if "optim" in raw else base.optim,  # type: ignore[arg-type]
+        model=_model(raw["model"]) if "model" in raw else base.model,
+        optim=OptimConfig(**raw["optim"]) if "optim" in raw else base.optim,
         temp_schedule=(
-            TempScheduleConfig(**raw["temp_schedule"])  # type: ignore[arg-type]
+            TempScheduleConfig(**raw["temp_schedule"])
             if "temp_schedule" in raw
             else base.temp_schedule
         ),
-        reg=RegConfig(**raw["reg"]) if "reg" in raw else base.reg,  # type: ignore[arg-type]
-        data=DataConfig(**raw["data"]) if "data" in raw else base.data,  # type: ignore[arg-type]
-        probe=ProbeConfig(**raw["probe"]) if "probe" in raw else base.probe,  # type: ignore[arg-type]
+        reg=RegConfig(**raw["reg"]) if "reg" in raw else base.reg,
+        data=DataConfig(**raw["data"]) if "data" in raw else base.data,
+        probe=ProbeConfig(**raw["probe"]) if "probe" in raw else base.probe,
         checkpoint=(
-            CheckpointConfig(**raw["checkpoint"])  # type: ignore[arg-type]
+            CheckpointConfig(**raw["checkpoint"])
             if "checkpoint" in raw
             else base.checkpoint
         ),
-        surgery=(
-            SurgeryConfig(**raw["surgery"])  # type: ignore[arg-type]
-            if "surgery" in raw
-            else base.surgery
-        ),
-        wandb=_wandb(raw["wandb"]) if "wandb" in raw else base.wandb,  # type: ignore[arg-type]
-        train=TrainConfig(**raw["train"]) if "train" in raw else base.train,  # type: ignore[arg-type]
+        surgery=(SurgeryConfig(**raw["surgery"]) if "surgery" in raw else base.surgery),
+        wandb=_wandb(raw["wandb"]) if "wandb" in raw else base.wandb,
+        train=TrainConfig(**raw["train"]) if "train" in raw else base.train,
     )
 
 
