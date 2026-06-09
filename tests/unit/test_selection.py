@@ -1,10 +1,15 @@
 """Unit tests for analysis.selection ranking/selection (spec §4.10, §7)."""
 
+import torch
+
 from kill_nonlinearities.analysis.selection import (
+    assign_modes,
     rank_by_entropy,
     rank_random,
+    select_topk,
 )
 from kill_nonlinearities.analysis.statistics import NeuronStats
+from kill_nonlinearities.models.activations import ActivationMode
 
 
 def _stats() -> list[NeuronStats]:
@@ -44,3 +49,58 @@ def test_rank_random_is_deterministic_under_seed() -> None:
     assert sorted((s.site, s.index) for s in a) == sorted(
         (s.site, s.index) for s in stats
     )
+
+
+def test_select_topk_boundaries_global_across_sites() -> None:
+    ranked = rank_by_entropy(_stats())  # ordered: relu0/1, relu1/0, relu0/0
+    assert select_topk(ranked, 0) == []
+    assert select_topk(ranked, len(ranked)) == ranked
+    top1 = select_topk(ranked, 1)
+    assert len(top1) == 1
+    assert (top1[0].site, top1[0].index) == ("relu0", 1)
+    # k spans sites globally: top-2 pulls from two different sites.
+    top2 = select_topk(ranked, 2)
+    assert {(s.site, s.index) for s in top2} == {("relu0", 1), ("relu1", 0)}
+
+
+def test_assign_modes_full_width_and_rules() -> None:
+    # Two sites: relu0 width 2, relu1 width 1.
+    selection = [
+        NeuronStats(site="relu0", index=0, q=0.0, entropy=0.0, mean_pre=-1.0),
+        NeuronStats(site="relu0", index=1, q=1.0, entropy=0.0, mean_pre=3.0),
+        NeuronStats(site="relu1", index=0, q=0.5, entropy=0.69, mean_pre=0.0),
+    ]
+    # Site widths must be inferable from the selection's max index per site here;
+    # pass full widths explicitly via padded selection is NOT how it works:
+    # assign_modes infers width from max index, so relu0 -> width 2, relu1 -> 1.
+    modes = assign_modes(selection, tie_break="identity")
+
+    assert set(modes) == {"relu0", "relu1"}
+    assert modes["relu0"].dtype == torch.int64
+    assert modes["relu0"].shape == (2,)
+    assert modes["relu1"].shape == (1,)
+    # q<0.5 -> ZERO; q>0.5 -> IDENTITY; q==0.5 -> tie_break (identity here).
+    assert modes["relu0"][0].item() == int(ActivationMode.ZERO)
+    assert modes["relu0"][1].item() == int(ActivationMode.IDENTITY)
+    assert modes["relu1"][0].item() == int(ActivationMode.IDENTITY)
+
+
+def test_assign_modes_unselected_stay_relu() -> None:
+    # relu0 has width 3 but only index 2 is selected -> 0 and 1 stay RELU.
+    selection = [
+        NeuronStats(site="relu0", index=2, q=0.0, entropy=0.0, mean_pre=-1.0),
+        # A non-selected sentinel at index 0 forces the inferred width to be 3.
+    ]
+    modes = assign_modes(selection, tie_break="zero", widths={"relu0": 3})
+    assert modes["relu0"].shape == (3,)
+    assert modes["relu0"][0].item() == int(ActivationMode.RELU)
+    assert modes["relu0"][1].item() == int(ActivationMode.RELU)
+    assert modes["relu0"][2].item() == int(ActivationMode.ZERO)
+
+
+def test_assign_modes_tie_break_zero() -> None:
+    selection = [
+        NeuronStats(site="relu0", index=0, q=0.5, entropy=0.69, mean_pre=0.0),
+    ]
+    modes = assign_modes(selection, tie_break="zero")
+    assert modes["relu0"][0].item() == int(ActivationMode.ZERO)

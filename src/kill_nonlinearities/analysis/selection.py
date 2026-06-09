@@ -1,8 +1,10 @@
 """Surgery selection: ranking, k-grid, top-k, and mode assignment (spec §4.10)."""
 
 import torch
+from torch import Tensor
 
 from kill_nonlinearities.analysis.statistics import NeuronStats
+from kill_nonlinearities.models.activations import ActivationMode
 
 
 def make_k_grid(total: int, num_k: int) -> list[int]:
@@ -24,3 +26,45 @@ def rank_random(stats: list[NeuronStats], seed: int) -> list[NeuronStats]:
     generator = torch.Generator().manual_seed(seed)
     order = torch.randperm(len(stats), generator=generator).tolist()
     return [stats[i] for i in order]
+
+
+def select_topk(ranked: list[NeuronStats], k: int) -> list[NeuronStats]:
+    """First ``k`` neurons of a GLOBAL ranking across all sites (spec §4.10)."""
+    return ranked[:k]
+
+
+def assign_modes(
+    selection: list[NeuronStats],
+    tie_break: str,
+    widths: dict[str, int] | None = None,
+) -> dict[str, Tensor]:
+    """Full-width ``[N_site]`` int64 mode tensors per site (spec §4.10, [R14][R17]).
+
+    Initialized to ``RELU``; selected neurons become ``ZERO`` (q<0.5),
+    ``IDENTITY`` (q>0.5), or ``tie_break`` (q==0.5). Unselected neurons stay
+    ``RELU``. When ``widths`` is omitted, each site's width is inferred as
+    ``max(index) + 1`` over its selected neurons.
+    """
+    tie_mode = {
+        "zero": ActivationMode.ZERO,
+        "identity": ActivationMode.IDENTITY,
+    }[tie_break]
+
+    if widths is None:
+        widths = {}
+        for s in selection:
+            widths[s.site] = max(widths.get(s.site, 0), s.index + 1)
+
+    modes = {
+        site: torch.full((width,), int(ActivationMode.RELU), dtype=torch.int64)
+        for site, width in widths.items()
+    }
+    for s in selection:
+        if s.q < 0.5:
+            mode = ActivationMode.ZERO
+        elif s.q > 0.5:
+            mode = ActivationMode.IDENTITY
+        else:
+            mode = tie_mode
+        modes[s.site][s.index] = int(mode)
+    return modes
