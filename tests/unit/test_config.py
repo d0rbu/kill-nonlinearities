@@ -4,7 +4,19 @@ import dataclasses
 
 import pytest
 
-from kill_nonlinearities.config import TempScheduleConfig
+from kill_nonlinearities.config import (
+    CheckpointConfig,
+    DataConfig,
+    ExperimentConfig,
+    ModelConfig,
+    OptimConfig,
+    ProbeConfig,
+    RegConfig,
+    SurgeryConfig,
+    TempScheduleConfig,
+    TrainConfig,
+    WandbConfig,
+)
 
 
 def test_temp_schedule_config_is_frozen() -> None:
@@ -27,3 +39,87 @@ def test_temp_schedule_config_rejects_non_positive_tau_end() -> None:
     """tau_end must be strictly positive (spec §3 [R16])."""
     with pytest.raises(ValueError, match="tau_end"):
         TempScheduleConfig(tau_end=-0.5)
+
+
+def test_model_config_defaults() -> None:
+    cfg = ModelConfig(input_dim=784)
+    assert cfg.input_dim == 784
+    assert cfg.hidden_dims == (256, 256)
+    assert cfg.output_dim == 10
+
+
+def test_optim_config_defaults() -> None:
+    cfg = OptimConfig()
+    assert cfg.lr == 1e-3
+    assert cfg.weight_decay == 0.0
+    assert cfg.name == "adam"
+
+
+def test_reg_config_defaults() -> None:
+    cfg = RegConfig()
+    assert cfg.lam == 0.0
+    assert cfg.entropy_eps == 1e-6
+
+
+def test_data_config_defaults() -> None:
+    cfg = DataConfig()
+    assert cfg.dataset == "mnist"
+    assert cfg.batch_size == 128
+    assert cfg.eval_batch_size == 512
+    assert cfg.val_fraction == 0.1
+    assert cfg.split_seed == 0
+    assert cfg.drop_last is False
+    assert cfg.data_dir == "data"
+    assert cfg.num_workers == 0
+
+
+def test_probe_config_defaults() -> None:
+    cfg = ProbeConfig()
+    assert cfg.num_neurons == 16
+    assert cfg.seed == 0
+    assert cfg.batch_size == 512
+
+
+def test_checkpoint_config_defaults() -> None:
+    cfg = CheckpointConfig()
+    assert cfg.every_epochs == 1
+    assert cfg.dir == "runs"
+
+
+def test_surgery_config_defaults() -> None:
+    cfg = SurgeryConfig()
+    assert cfg.num_k == 21
+    assert cfg.random_baseline is True
+    assert cfg.tie_break == "identity"
+
+
+def test_wandb_config_defaults() -> None:
+    cfg = WandbConfig()
+    assert cfg.project == "kill-nonlinearities"
+    assert cfg.entity is None
+    assert cfg.mode == "online"
+    assert cfg.group is None
+    assert cfg.tags == ()
+
+
+def test_train_config_defaults() -> None:
+    cfg = TrainConfig()
+    assert cfg.epochs == 20
+    assert cfg.seed == 0
+    assert cfg.device == "cpu"
+    assert cfg.grad_clip is None
+
+
+def test_experiment_config_composes_all() -> None:
+    cfg = ExperimentConfig(name="demo", model=ModelConfig(input_dim=784))
+    assert cfg.name == "demo"
+    assert cfg.model.input_dim == 784
+    assert isinstance(cfg.optim, OptimConfig)
+    assert isinstance(cfg.temp_schedule, TempScheduleConfig)
+    assert isinstance(cfg.reg, RegConfig)
+    assert isinstance(cfg.data, DataConfig)
+    assert isinstance(cfg.probe, ProbeConfig)
+    assert isinstance(cfg.checkpoint, CheckpointConfig)
+    assert isinstance(cfg.surgery, SurgeryConfig)
+    assert isinstance(cfg.wandb, WandbConfig)
+    assert isinstance(cfg.train, TrainConfig)
