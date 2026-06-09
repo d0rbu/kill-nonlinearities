@@ -32,13 +32,14 @@ from kill_nonlinearities.config import (
     TrainConfig,
     WandbConfig,
 )
-from kill_nonlinearities.data.datasets import make_dataloaders
+from kill_nonlinearities.data.datasets import make_dataloaders, make_probe_batch
 from kill_nonlinearities.experiments.run import (
     ExperimentResult,
     config_from_json,
     run_experiment,
 )
 from kill_nonlinearities.models.activations import ActivationMode
+from kill_nonlinearities.regularization.surrogate import soft_sign
 from kill_nonlinearities.surgery.apply import apply_modes
 from kill_nonlinearities.training.logging import InMemoryLogger
 from kill_nonlinearities.training.schedule import checkpoint_steps
@@ -417,6 +418,61 @@ def test_run_experiment_constant_schedule_pins_tau_to_tau_start(
     assert result.train_result.history
     for metric in result.train_result.history:
         assert metric.tau == tau_start
+
+
+def test_soft_p_split_aligns_with_neuron_stats_across_sites(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """soft_p concatenation order maps 1:1 to neuron_stats (site, index) (>=2 sites).
+
+    run_experiment builds soft_p as cat([soft_sign(z).mean(0) for z in
+    pre_activations]) and hard_q from stats in the SAME global order. This pins
+    that splitting soft_p by per-site neuron counts lands on exactly the same
+    (site, index) neurons as result.neuron_stats — i.e. the soft-p / hard-q
+    cross-site ordering is consistent (capstone hardening).
+    """
+    config = synthetic_config
+    result = run_experiment(config, logger=InMemoryLogger())
+
+    stats = result.neuron_stats
+    model = result.model
+    # The model has >=2 hidden sites.
+    assert len(model.site_names) >= 2
+
+    # Reconstruct the exact soft_p run_experiment computes (same probe path, tau).
+    _, val_loader, _ = make_dataloaders(config)
+    probe_batch = make_probe_batch(
+        val_loader, config.probe.batch_size, config.probe.seed
+    )
+    final_tau = result.train_result.history[-1].tau
+    model.eval()
+    with torch.no_grad():
+        out = model(probe_batch)
+        per_site_soft = [soft_sign(z, final_tau).mean(0) for z in out.pre_activations]
+    soft_p = torch.cat(per_site_soft)
+
+    # Global ordering of stats matches the concatenation: per-site, in-index order.
+    assert len(stats) == int(soft_p.shape[0])
+    expected_order: list[tuple[str, int]] = []
+    for site, vec in zip(out.site_names, per_site_soft, strict=True):
+        expected_order.extend((site, i) for i in range(int(vec.shape[0])))
+    assert [(s.site, s.index) for s in stats] == expected_order
+
+    # Splitting soft_p by per-site neuron counts recovers each site's slice in
+    # the same (site, index) layout as neuron_stats.
+    site_widths = [int(vec.shape[0]) for vec in per_site_soft]
+    offset = 0
+    for site, width in zip(out.site_names, site_widths, strict=True):
+        site_slice = soft_p[offset : offset + width]
+        site_stats = [s for s in stats if s.site == site]
+        assert [s.index for s in site_stats] == list(range(width))
+        assert len(site_stats) == width
+        # Each split element belongs to the matching (site, index) stat position.
+        for i in range(width):
+            assert stats[offset + i].site == site
+            assert stats[offset + i].index == i
+            assert site_slice[i].item() == pytest.approx(soft_p[offset + i].item())
+        offset += width
 
 
 def test_config_from_json_builds_nested_config(tmp_path: Path) -> None:
