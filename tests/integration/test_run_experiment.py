@@ -163,3 +163,16 @@ def test_run_logs_val_acc_sweep_metric(
     ]
     assert len(val_acc_values) == 1
     assert 0.0 <= val_acc_values[0] <= 1.0
+
+
+def test_all_artifact_files_exist_and_are_non_empty(
+    synthetic_config: ExperimentConfig,
+) -> None:
+    """Every rendered artifact is a real, non-empty file on disk."""
+    result = run_experiment(synthetic_config, logger=InMemoryLogger())
+
+    assert len(result.artifact_paths) == 8
+    for key, path in result.artifact_paths.items():
+        assert isinstance(path, Path), key
+        assert path.is_file(), key
+        assert path.stat().st_size > 0, key
