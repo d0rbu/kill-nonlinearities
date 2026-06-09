@@ -325,6 +325,30 @@ def test_config_from_json_missing_section_uses_defaults(tmp_path: Path) -> None:
     assert config.train == default.train
 
 
+def test_config_from_json_coerces_wandb_tags_and_default_hidden_dims(
+    tmp_path: Path,
+) -> None:
+    """The wandb section's tags array becomes a tuple; model without hidden_dims works."""
+    payload = {
+        "model": {"input_dim": 12, "output_dim": 3},  # no hidden_dims -> default
+        "wandb": {
+            "project": "p",
+            "entity": None,
+            "mode": "disabled",
+            "group": None,
+            "tags": ["a", "b"],
+        },
+    }
+    path = tmp_path / "wandb.json"
+    path.write_text(json.dumps(payload))
+
+    config = config_from_json(path)
+
+    assert config.model.input_dim == 12
+    assert config.model.hidden_dims == ExperimentConfig().model.hidden_dims
+    assert config.wandb.tags == ("a", "b")  # JSON array coerced to tuple
+
+
 def test_cli_module_help_runs() -> None:
     """`python -m kill_nonlinearities.experiments.run --help` exits 0 (§4.13 CLI)."""
     proc = subprocess.run(
