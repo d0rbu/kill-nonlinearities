@@ -277,9 +277,22 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   to ~0.30, chance-ish). The **entropy ranking dominates the random baseline** across the
   mid-range (k=256: 0.9522 vs 0.8162 random; k=179: 0.9775 vs 0.9440), confirming low-entropy
   neurons really are the cheap-to-remove ones. Val and test curves track within ~1% everywhere
-  (small generalization gap). Artifacts in `runs/mnist-lambda/`: `acc_vs_k.png`,
-  `entropy_map.png`, `mean_pre_dist.png`, `per_layer_entropy.png`, `soft_vs_hard.png`,
-  `loss_curves.png`, `activation.gif`, `qi_bimodality.gif` (one frame per checkpoint, 9 total).
+  (small generalization gap).
+- **Plots** (committed under [`assets/mnist-lambda/`](assets/mnist-lambda/); the
+  9-frame `activation.gif` and `qi_bimodality.gif` are there too, plus regenerable in
+  `runs/mnist-lambda/`):
+
+  | Accuracy vs. surgery *k* (entropy vs. random) | Soft `pᵢ` vs. hard `qᵢ` |
+  | --- | --- |
+  | ![accuracy vs k](assets/mnist-lambda/acc_vs_k.png) | ![soft vs hard](assets/mnist-lambda/soft_vs_hard.png) |
+
+  | Mean pre-activation per neuron | Sign-entropy per neuron (sorted) |
+  | --- | --- |
+  | ![mean pre-activation](assets/mnist-lambda/mean_pre_dist.png) | ![sign-entropy map](assets/mnist-lambda/entropy_map.png) |
+
+  | Training losses (task / reg / total) | Per-layer mean sign-entropy |
+  | --- | --- |
+  | ![loss curves](assets/mnist-lambda/loss_curves.png) | ![per-layer entropy](assets/mnist-lambda/per_layer_entropy.png) |
 - **Takeaway:** at λ=0.05 about **10% of neurons (51/512) are exactly removable with zero
   accuracy cost**, and ~25–40% can be masked for a few points of accuracy — the entropy
   ranking is the right knob (it beats random masking by a wide margin mid-curve). At this λ the
