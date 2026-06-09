@@ -41,3 +41,18 @@ def test_binary_entropy_mixes_endpoints_and_interior_finite() -> None:
     assert out[0].item() == 0.0
     assert out[-1].item() == 0.0
     torch.testing.assert_close(out[2], torch.tensor(math.log(2.0)))
+
+
+def test_binary_entropy_gradient_closed_form_interior() -> None:
+    """dH/dp == log((1-p)/p) on the open interval (spec §6 I3 [R12])."""
+    p = torch.linspace(0.05, 0.95, 19, dtype=torch.float64, requires_grad=True)
+    binary_entropy(p).sum().backward()
+    expected = torch.log((1.0 - p) / p)
+    assert p.grad is not None
+    torch.testing.assert_close(p.grad, expected)
+
+
+def test_binary_entropy_gradcheck_open_interval_float64() -> None:
+    """gradcheck passes on p in [0.05, 0.95], float64 (spec §6 I3 [R12])."""
+    p = torch.linspace(0.05, 0.95, 19, dtype=torch.float64, requires_grad=True)
+    assert torch.autograd.gradcheck(binary_entropy, (p,))
