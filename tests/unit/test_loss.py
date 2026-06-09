@@ -107,7 +107,7 @@ def test_sign_consistency_loss_invariant_to_neuron_permutation() -> None:
     torch.testing.assert_close(base, permuted)
 
 
-def test_per_neuron_entropy_vector_bit_exact_under_inverse_neuron_perm() -> None:
+def test_per_neuron_entropy_vector_invariant_under_inverse_neuron_perm() -> None:
     """The per-neuron entropy vector is invariant under the inverse perm (assert_close, [R13])."""
     torch.manual_seed(3)
     tau = 1.0
