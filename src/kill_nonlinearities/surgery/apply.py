@@ -4,7 +4,7 @@ import copy
 from dataclasses import dataclass
 
 import torch
-from torch import Tensor, nn
+from torch import Tensor
 from torch.utils.data import DataLoader
 
 from kill_nonlinearities.analysis.selection import (
@@ -22,7 +22,7 @@ def apply_modes(model: ReLUMLP, modes_by_site: dict[str, Tensor]) -> None:
         site_to_act[site].set_modes(modes)
 
 
-def evaluate_accuracy(model: nn.Module, loader: DataLoader, device: str) -> float:
+def evaluate_accuracy(model: ReLUMLP, loader: DataLoader, device: str) -> float:
     """Top-1 accuracy over ``loader`` (spec §4.11)."""
     model.eval()
     correct = 0
@@ -60,7 +60,7 @@ def k_sweep(
     work = copy.deepcopy(model)
     widths = {
         site: int(act.mode.shape[0])
-        for site, act in zip(model.site_names, model.activations, strict=True)
+        for site, act in zip(work.site_names, work.activations, strict=True)
     }
     points: list[KPoint] = []
     for k in k_grid:

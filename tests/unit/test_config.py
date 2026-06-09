@@ -102,6 +102,14 @@ def test_surgery_config_defaults() -> None:
     assert cfg.tie_break == "identity"
 
 
+def test_surgery_config_rejects_invalid_tie_break() -> None:
+    """tie_break must be 'zero' or 'identity' (validated at construction)."""
+    with pytest.raises(ValueError, match="tie_break"):
+        SurgeryConfig(tie_break="bogus")
+    assert SurgeryConfig(tie_break="zero").tie_break == "zero"
+    assert SurgeryConfig(tie_break="identity").tie_break == "identity"
+
+
 def test_wandb_config_defaults() -> None:
     cfg = WandbConfig()
     assert cfg.project == "kill-nonlinearities"

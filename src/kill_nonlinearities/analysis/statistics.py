@@ -9,9 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
-from torch import Tensor, nn
+from torch import Tensor
 from torch.utils.data import DataLoader
 
+from kill_nonlinearities.models.mlp import ReLUMLP
 from kill_nonlinearities.regularization.entropy import (
     hard_fraction_positive,
     sign_entropy,
@@ -20,7 +21,7 @@ from kill_nonlinearities.training.checkpoint import load_checkpoint
 
 
 def collect_pre_activations(
-    model: nn.Module, loader: DataLoader, device: str
+    model: ReLUMLP, loader: DataLoader, device: str
 ) -> dict[str, Tensor]:
     """Concatenate per-site pre-activations over ``loader`` (spec §4.10).
 
@@ -77,7 +78,7 @@ class FrameStats:
 
 def collect_history(
     checkpoint_paths: Sequence[Path],
-    model_factory: Callable[[], nn.Module],
+    model_factory: Callable[[], ReLUMLP],
     probe_batch: Tensor,
     val_loader: DataLoader,
     probe_neurons: Sequence[tuple[str, int]],

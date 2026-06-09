@@ -70,10 +70,10 @@ def test_assign_modes_full_width_and_rules() -> None:
         NeuronStats(site="relu0", index=1, q=1.0, entropy=0.0, mean_pre=3.0),
         NeuronStats(site="relu1", index=0, q=0.5, entropy=0.69, mean_pre=0.0),
     ]
-    # Site widths must be inferable from the selection's max index per site here;
-    # pass full widths explicitly via padded selection is NOT how it works:
-    # assign_modes infers width from max index, so relu0 -> width 2, relu1 -> 1.
-    modes = assign_modes(selection, tie_break="identity")
+    # True site widths: relu0 has 2 neurons, relu1 has 1.
+    modes = assign_modes(
+        selection, tie_break="identity", widths={"relu0": 2, "relu1": 1}
+    )
 
     assert set(modes) == {"relu0", "relu1"}
     assert modes["relu0"].dtype == torch.int64
@@ -86,10 +86,9 @@ def test_assign_modes_full_width_and_rules() -> None:
 
 
 def test_assign_modes_unselected_stay_relu() -> None:
-    # relu0 has width 3 but only index 2 is selected -> 0 and 1 stay RELU.
+    # relu0 has true width 3 but only index 2 is selected -> 0 and 1 stay RELU.
     selection = [
         NeuronStats(site="relu0", index=2, q=0.0, entropy=0.0, mean_pre=-1.0),
-        # A non-selected sentinel at index 0 forces the inferred width to be 3.
     ]
     modes = assign_modes(selection, tie_break="zero", widths={"relu0": 3})
     assert modes["relu0"].shape == (3,)
@@ -102,5 +101,5 @@ def test_assign_modes_tie_break_zero() -> None:
     selection = [
         NeuronStats(site="relu0", index=0, q=0.5, entropy=0.69, mean_pre=0.0),
     ]
-    modes = assign_modes(selection, tie_break="zero")
+    modes = assign_modes(selection, tie_break="zero", widths={"relu0": 1})
     assert modes["relu0"][0].item() == int(ActivationMode.ZERO)

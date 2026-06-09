@@ -36,24 +36,19 @@ def select_topk(ranked: list[NeuronStats], k: int) -> list[NeuronStats]:
 def assign_modes(
     selection: list[NeuronStats],
     tie_break: str,
-    widths: dict[str, int] | None = None,
+    widths: dict[str, int],
 ) -> dict[str, Tensor]:
     """Full-width ``[N_site]`` int64 mode tensors per site (spec §4.10, [R14][R17]).
 
     Initialized to ``RELU``; selected neurons become ``ZERO`` (q<0.5),
     ``IDENTITY`` (q>0.5), or ``tie_break`` (q==0.5). Unselected neurons stay
-    ``RELU``. When ``widths`` is omitted, each site's width is inferred as
-    ``max(index) + 1`` over its selected neurons.
+    ``RELU``. ``widths`` gives each site's true neuron count so the full-width
+    tensors are correct regardless of which neurons are selected.
     """
     tie_mode = {
         "zero": ActivationMode.ZERO,
         "identity": ActivationMode.IDENTITY,
     }[tie_break]
-
-    if widths is None:
-        widths = {}
-        for s in selection:
-            widths[s.site] = max(widths.get(s.site, 0), s.index + 1)
 
     modes = {
         site: torch.full((width,), int(ActivationMode.RELU), dtype=torch.int64)

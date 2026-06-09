@@ -93,6 +93,12 @@ class SurgeryConfig:
     random_baseline: bool = True
     tie_break: str = "identity"
 
+    def __post_init__(self) -> None:
+        if self.tie_break not in {"zero", "identity"}:
+            raise ValueError(
+                f"tie_break must be 'zero' or 'identity', got {self.tie_break!r}"
+            )
+
 
 @dataclass(frozen=True)
 class WandbConfig:
