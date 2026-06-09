@@ -32,3 +32,12 @@ def hard_fraction_positive(z: Tensor) -> Tensor:
     Uses the strict ``>`` predicate, so ``z == 0`` counts as negative (spec §4.4 [R6]).
     """
     return (z > 0.0).to(z.dtype).mean(0)
+
+
+def sign_entropy(q: Tensor) -> Tensor:
+    """Sign-entropy ``H(q_i)`` on the hard fraction-positive (analysis, spec §4.4).
+
+    Identical to ``binary_entropy``; named separately because it is applied to the
+    hard ``q`` under ``no_grad`` where endpoint NaN gradients never arise.
+    """
+    return binary_entropy(q)

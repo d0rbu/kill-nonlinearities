@@ -8,6 +8,7 @@ from kill_nonlinearities.regularization.entropy import (
     batch_fraction_positive,
     binary_entropy,
     hard_fraction_positive,
+    sign_entropy,
 )
 
 
@@ -97,3 +98,15 @@ def test_hard_fraction_positive_zero_counts_as_negative() -> None:
     """A column of all-zeros yields q == 0 (strict '>', spec §4.4 [R6])."""
     z = torch.zeros(4, 3)
     torch.testing.assert_close(hard_fraction_positive(z), torch.zeros(3))
+
+
+def test_sign_entropy_equals_binary_entropy() -> None:
+    """sign_entropy(q) == binary_entropy(q) (spec §4.4)."""
+    q = torch.tensor([0.0, 0.25, 0.5, 1.0])
+    torch.testing.assert_close(sign_entropy(q), binary_entropy(q))
+
+
+def test_sign_entropy_zero_at_consistent_neurons() -> None:
+    """A perfectly sign-consistent q in {0, 1} has zero entropy (spec §6 I2)."""
+    q = torch.tensor([0.0, 1.0])
+    assert torch.equal(sign_entropy(q), torch.zeros(2))
