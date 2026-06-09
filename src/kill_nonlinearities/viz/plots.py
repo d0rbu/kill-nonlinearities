@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 from kill_nonlinearities.analysis.statistics import NeuronStats
 from kill_nonlinearities.training.trainer import StepMetrics
 
-__all__ = ["plot_loss_curves", "plot_mean_pre_dist"]
+__all__ = ["plot_entropy_map", "plot_loss_curves", "plot_mean_pre_dist"]
 
 
 def plot_loss_curves(history: Sequence[StepMetrics], path: Path) -> Path:
@@ -62,6 +62,26 @@ def plot_mean_pre_dist(stats: Sequence[NeuronStats], path: Path) -> Path:
         ax.set_title(site)
         ax.set_xlabel("mean pre-activation")
         ax.set_ylabel("count")
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_entropy_map(stats: Sequence[NeuronStats], path: Path) -> Path:
+    """Per-layer sign-entropy sorted ascending, highlighting low/high H(q) (spec §5).
+
+    One subplot per layer; bars sorted by entropy so the lowest-entropy (most
+    eliminable) neurons sit on the left. Takes a full file ``path``; returns it.
+    """
+    sites = _sites_in_order(stats)
+    fig, axes = plt.subplots(len(sites), 1, squeeze=False)
+    for ax, site in zip(axes[:, 0], sites, strict=True):
+        entropies = sorted(s.entropy for s in stats if s.site == site)
+        ax.bar(range(len(entropies)), entropies)
+        ax.set_title(f"{site}: sign-entropy (ascending)")
+        ax.set_xlabel("neuron rank")
+        ax.set_ylabel("H(q) [nats]")
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)

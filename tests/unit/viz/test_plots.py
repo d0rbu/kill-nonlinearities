@@ -57,3 +57,13 @@ def test_plot_mean_pre_dist_writes_nonempty_file(tmp_path: Path) -> None:
     assert result == out
     assert out.exists()
     assert out.stat().st_size > 0
+
+
+def test_plot_entropy_map_writes_nonempty_file(tmp_path: Path) -> None:
+    """plot_entropy_map writes a non-empty figure of sorted H(q) per layer (spec §5)."""
+    out = tmp_path / "entropy_map.png"
+    result = plots.plot_entropy_map(_toy_stats(), out)
+
+    assert result == out
+    assert out.exists()
+    assert out.stat().st_size > 0
