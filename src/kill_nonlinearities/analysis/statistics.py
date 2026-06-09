@@ -92,7 +92,10 @@ def collect_history(
     """
     frames: list[FrameStats] = []
     for path in checkpoint_paths:
-        model = model_factory()
+        # Own the device move so the rebuilt model matches the device tensors
+        # (``probe_batch.to(device)`` / ``collect_pre_activations(..., device)``)
+        # regardless of what ``model_factory`` returns (capstone fix).
+        model = model_factory().to(device)
         step = load_checkpoint(path, model)
         model.eval()
         with torch.no_grad():
