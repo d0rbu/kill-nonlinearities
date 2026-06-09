@@ -243,8 +243,8 @@ The `binary_entropy` function itself stays **unclamped** — the honest math —
 
 ## Roadmap
 
-Tracked work, roughly in order. (Once a GitHub remote exists, these become issues — see
-[contributing](../development/contributing.md).)
+Tracked work, roughly in order. (File these as GitHub issues — see
+[contributing](../development/contributing.md#roadmap--issues).)
 
 - [x] **Phase 0 — scaffold.** Tooling, test harness, docs (this repo).
 - [~] **Phase 1a — regularizer + analysis + masked surgery on a toy MLP** (MNIST/CIFAR).

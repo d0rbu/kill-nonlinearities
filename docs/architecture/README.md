@@ -2,13 +2,11 @@
 
 [← Documentation hub](../README.md)
 
-How the code is *planned* to be organized, and the design decisions behind it. The codebase
-is currently a scaffold, so this section is mostly forward-looking — it records intent so
-that implementation stays coherent.
+How the code is organized, and the design decisions behind it.
 
 ## Contents
 
-- **[overview.md](overview.md)** — planned module layout and the key design decisions
+- **[overview.md](overview.md)** — module layout and the key design decisions
   (notably: models emit their own pre-activations rather than relying on `nn.Module` hooks).
 
 ## Relationship to the rest of the docs

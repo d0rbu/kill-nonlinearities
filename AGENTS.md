@@ -108,5 +108,5 @@ Full recipe list: [`docs/development/tooling.md`](docs/development/tooling.md).
 - Python 3.14 currently resolves to **3.14.0rc3** via `uv`'s index; if a dependency lacks a
   3.14 wheel, fall back to `uv python pin 3.13` (everything works on the floor).
 - The CPU `torch` index is set in `pyproject.toml`; a plain `uv sync` will **not** pull CUDA.
-- No GitHub remote yet, so roadmap items aren't issues yet — see
+- Roadmap items aren't filed as GitHub issues yet — see
   [contributing.md](docs/development/contributing.md#roadmap--issues).
