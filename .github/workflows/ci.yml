@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Keep the suite hermetic: no wandb network calls, no matplotlib display.
+env:
+  WANDB_MODE: disabled
+  MPLBACKEND: Agg
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: just check (lint + type + test)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Pin the project interpreter
+        run: uv python pin "$(cat .python-version)"
+
+      - name: Sync the environment (CPU torch + dev tools)
+        run: uv sync
+
+      - name: Run the gate
+        env:
+          HYPOTHESIS_PROFILE: ci
+        run: just check
