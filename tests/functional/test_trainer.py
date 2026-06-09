@@ -91,6 +91,10 @@ def test_checkpoints_written_at_checkpoint_steps(tmp_path: Path) -> None:
     expected = checkpoint_steps(total_steps=3, steps_per_epoch=1, every_epochs=1)
     assert [int(p.stem.split("_")[1]) for p in result.checkpoint_paths] == expected
     assert all(p.exists() for p in result.checkpoint_paths)
+    # Checkpoints co-locate with artifacts under ``<checkpoint.dir>/<name>/``,
+    # NOT the flat ``checkpoint.dir`` (capstone fix).
+    ckpt_dir = Path(config.checkpoint.dir) / config.name
+    assert all(p.parent == ckpt_dir for p in result.checkpoint_paths)
 
 
 def test_annealed_tau_steps_keep_grads_and_params_finite(

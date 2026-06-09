@@ -75,14 +75,22 @@ def sweep_entry() -> None:  # pragma: no cover - wandb network glue ([R3], §7)
     `run` is the already-active wandb run; passing it to `WandbLogger` makes the logger
     ATTACH rather than init a second time, so there is exactly one `wandb.init()` per run.
     """
+    import dataclasses
+
     import wandb
 
     from kill_nonlinearities.experiments.run import run_experiment
     from kill_nonlinearities.training.logging import WandbLogger
 
     wandb.init()
-    config = config_from_wandb(dict(wandb.config))
-    run_experiment(config, logger=WandbLogger(config.wandb, run=wandb.run))
+    # Give each trial a UNIQUE name so trials don't share a ``runs/<name>/`` dir
+    # and clobber each other's checkpoints/artifacts (capstone fix).
+    run = wandb.run
+    config = dataclasses.replace(
+        config_from_wandb(dict(wandb.config)),
+        name=f"sweep-{run.id}",  # ty: ignore[unresolved-attribute]
+    )
+    run_experiment(config, logger=WandbLogger(config.wandb, run=run))
 
 
 def launch_sweep(

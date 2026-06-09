@@ -93,6 +93,11 @@ def train(
     criterion = nn.CrossEntropyLoss()
     result = TrainResult(model=model)
 
+    # Checkpoints co-locate with run artifacts under ``runs/<name>/`` so two runs
+    # that share ``checkpoint.dir`` but differ in ``name`` never clobber each
+    # other's ``step_N.pt`` (capstone fix).
+    ckpt_dir = Path(config.checkpoint.dir) / config.name
+
     step = 0
     model.train()
     for epoch in range(config.train.epochs):
@@ -137,7 +142,7 @@ def train(
                     model,
                     step=step,
                     config=config,
-                    dir=Path(config.checkpoint.dir),
+                    dir=ckpt_dir,
                 )
                 result.checkpoint_paths.append(path)
 
