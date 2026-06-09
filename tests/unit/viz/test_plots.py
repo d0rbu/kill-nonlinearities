@@ -67,3 +67,13 @@ def test_plot_entropy_map_writes_nonempty_file(tmp_path: Path) -> None:
     assert result == out
     assert out.exists()
     assert out.stat().st_size > 0
+
+
+def test_plot_per_layer_entropy_writes_nonempty_file(tmp_path: Path) -> None:
+    """plot_per_layer_entropy writes a non-empty bar chart, one value per layer (§5)."""
+    out = tmp_path / "per_layer_entropy.png"
+    result = plots.plot_per_layer_entropy(_toy_stats(), out)
+
+    assert result == out
+    assert out.exists()
+    assert out.stat().st_size > 0

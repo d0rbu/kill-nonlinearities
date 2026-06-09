@@ -18,7 +18,12 @@ import matplotlib.pyplot as plt
 from kill_nonlinearities.analysis.statistics import NeuronStats
 from kill_nonlinearities.training.trainer import StepMetrics
 
-__all__ = ["plot_entropy_map", "plot_loss_curves", "plot_mean_pre_dist"]
+__all__ = [
+    "plot_entropy_map",
+    "plot_loss_curves",
+    "plot_mean_pre_dist",
+    "plot_per_layer_entropy",
+]
 
 
 def plot_loss_curves(history: Sequence[StepMetrics], path: Path) -> Path:
@@ -83,6 +88,24 @@ def plot_entropy_map(stats: Sequence[NeuronStats], path: Path) -> Path:
         ax.set_xlabel("neuron rank")
         ax.set_ylabel("H(q) [nats]")
     fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_per_layer_entropy(stats: Sequence[NeuronStats], path: Path) -> Path:
+    """Bar chart of mean sign-entropy per layer (one value per site, spec §5)."""
+    sites = _sites_in_order(stats)
+    means = [
+        sum(s.entropy for s in stats if s.site == site)
+        / sum(1 for s in stats if s.site == site)
+        for site in sites
+    ]
+    fig, ax = plt.subplots()
+    ax.bar(sites, means)
+    ax.set_xlabel("layer")
+    ax.set_ylabel("mean H(q) [nats]")
+    ax.set_title("Per-layer mean sign-entropy")
     fig.savefig(path)
     plt.close(fig)
     return path
