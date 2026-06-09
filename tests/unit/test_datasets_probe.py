@@ -1,9 +1,20 @@
 """Unit tests for probe selection determinism (spec §4.9, §7 probe fixity)."""
 
+import pytest
 import torch
 
-from kill_nonlinearities.config import ModelConfig
-from kill_nonlinearities.data.datasets import select_probe_neurons
+from kill_nonlinearities.config import (
+    DataConfig,
+    ExperimentConfig,
+    ModelConfig,
+    ProbeConfig,
+)
+from kill_nonlinearities.data.datasets import (
+    build_transform,
+    make_dataloaders,
+    make_probe_batch,
+    select_probe_neurons,
+)
 from kill_nonlinearities.models.mlp import ReLUMLP
 
 
@@ -58,17 +69,6 @@ def test_select_probe_neurons_clamps_to_total_neurons() -> None:
     assert len(set(selected)) == total
 
 
-from kill_nonlinearities.config import (  # noqa: E402  (grouped with module imports above)
-    DataConfig,
-    ExperimentConfig,
-    ProbeConfig,
-)
-from kill_nonlinearities.data.datasets import (  # noqa: E402
-    make_dataloaders,
-    make_probe_batch,
-)
-
-
 def _probe_config() -> ExperimentConfig:
     """Synthetic config with a small probe batch (no network)."""
     return ExperimentConfig(
@@ -119,13 +119,6 @@ def test_make_probe_batch_clamps_to_dataset_size() -> None:
     n = len(val.dataset)  # ty: ignore[invalid-argument-type]
     batch = make_probe_batch(val, size=n + 1000, seed=0)
     assert batch.shape[0] == n
-
-
-import pytest  # noqa: E402
-
-from kill_nonlinearities.data.datasets import (  # noqa: E402
-    build_transform,
-)
 
 
 def test_build_transform_mnist_has_no_augmentation() -> None:

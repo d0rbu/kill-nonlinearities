@@ -73,6 +73,15 @@ def test_data_config_defaults() -> None:
     assert cfg.num_workers == 0
 
 
+def test_data_config_rejects_out_of_range_val_fraction() -> None:
+    """val_fraction must be strictly inside (0, 1): both splits non-empty."""
+    with pytest.raises(ValueError, match="val_fraction"):
+        DataConfig(val_fraction=0.0)
+    with pytest.raises(ValueError, match="val_fraction"):
+        DataConfig(val_fraction=1.0)
+    assert DataConfig(val_fraction=0.1).val_fraction == 0.1
+
+
 def test_probe_config_defaults() -> None:
     cfg = ProbeConfig()
     assert cfg.num_neurons == 16

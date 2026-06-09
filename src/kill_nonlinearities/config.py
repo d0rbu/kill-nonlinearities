@@ -63,6 +63,10 @@ class DataConfig:
     data_dir: str = "data"
     num_workers: int = 0
 
+    def __post_init__(self) -> None:
+        if not 0.0 < self.val_fraction < 1.0:
+            raise ValueError(f"val_fraction must be in (0, 1), got {self.val_fraction}")
+
 
 @dataclass(frozen=True)
 class ProbeConfig:
