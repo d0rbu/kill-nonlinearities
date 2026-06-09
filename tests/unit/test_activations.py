@@ -159,3 +159,36 @@ def test_relu_subgradient_at_zero_is_zero() -> None:
     act(z).sum().backward()
     assert z.grad is not None
     assert torch.equal(z.grad, torch.zeros(2, 1))
+
+
+def test_state_dict_round_trip_preserves_non_default_mode() -> None:
+    """A non-default mode buffer survives a strict state_dict save/load round-trip."""
+    src = SelectiveReLU(num_features=3)
+    src.set_modes(torch.tensor([2, 1, 0], dtype=torch.int64))
+    dst = SelectiveReLU(num_features=3)
+    dst.load_state_dict(src.state_dict())
+    assert dst.mode.dtype == torch.int64
+    assert torch.equal(dst.mode, torch.tensor([2, 1, 0], dtype=torch.int64))
+    z = torch.tensor([[-1.0, 5.0, -2.0]])
+    assert torch.equal(dst(z), src(z))
+
+
+def test_to_float64_keeps_mode_comparisons_working() -> None:
+    """After .to(torch.float64) the int64 mode buffer is unchanged and forward works."""
+    act = SelectiveReLU(num_features=3).to(torch.float64)
+    act.set_modes(
+        torch.tensor(
+            [
+                int(ActivationMode.ZERO),
+                int(ActivationMode.IDENTITY),
+                int(ActivationMode.RELU),
+            ]
+        )
+    )
+    assert act.mode.dtype == torch.int64
+    z = torch.tensor([[-1.0, -2.0, -3.0], [4.0, 5.0, 6.0]], dtype=torch.float64)
+    out = act(z)
+    assert out.dtype == torch.float64
+    assert torch.equal(out[:, 0], torch.zeros(2, dtype=torch.float64))
+    assert torch.equal(out[:, 1], z[:, 1])
+    assert torch.equal(out[:, 2], torch.relu(z[:, 2]))
