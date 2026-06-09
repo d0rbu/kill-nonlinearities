@@ -370,6 +370,55 @@ def test_run_experiment_three_hidden_layers(tmp_path: Path) -> None:
         assert math.isfinite(kp.test_acc)
 
 
+def test_run_experiment_checkpoint_cadence_every_two_epochs(tmp_path: Path) -> None:
+    """epochs>=4 + every_epochs=2: checkpoint/frame/gif counts all match the schedule.
+
+    checkpoint_paths, frames, and BOTH gifs' frame counts equal
+    len(checkpoint_steps(total_steps, steps_per_epoch, every_epochs=2)).
+    """
+    base = make_synthetic_config(tmp_path)
+    config = dataclasses.replace(
+        base,
+        name="it-cadence",
+        train=dataclasses.replace(base.train, epochs=4),
+        checkpoint=CheckpointConfig(every_epochs=2, dir=str(tmp_path / "runs")),
+    )
+
+    result = run_experiment(config, logger=InMemoryLogger())
+
+    train_loader, _, _ = make_dataloaders(config)
+    steps_per_epoch = len(train_loader)
+    total_steps = config.train.epochs * steps_per_epoch
+    expected_steps = checkpoint_steps(total_steps, steps_per_epoch, every_epochs=2)
+    n = len(expected_steps)
+
+    assert len(result.train_result.checkpoint_paths) == n
+    assert len(result.frames) == n
+    assert gif_frame_count(result.artifact_paths["activation_gif"]) == n
+    assert gif_frame_count(result.artifact_paths["qi_bimodality_gif"]) == n
+
+
+def test_run_experiment_constant_schedule_pins_tau_to_tau_start(
+    tmp_path: Path,
+) -> None:
+    """A constant temp schedule keeps every history tau at tau_start (spec §4.5)."""
+    base = make_synthetic_config(tmp_path)
+    tau_start = 0.7
+    config = dataclasses.replace(
+        base,
+        name="it-constant-tau",
+        temp_schedule=TempScheduleConfig(
+            kind="constant", tau_start=tau_start, tau_end=0.01
+        ),
+    )
+
+    result = run_experiment(config, logger=InMemoryLogger())
+
+    assert result.train_result.history
+    for metric in result.train_result.history:
+        assert metric.tau == tau_start
+
+
 def test_config_from_json_builds_nested_config(tmp_path: Path) -> None:
     """config_from_json maps a nested JSON object into an ExperimentConfig (§4.13)."""
     payload = {
