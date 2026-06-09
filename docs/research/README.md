@@ -262,6 +262,30 @@ Tracked work, roughly in order. (File these as GitHub issues — see
 > Newest entries on top. Each entry: date, what was tried, config (λ, τ schedule, model,
 > data), result, and takeaway. Keep findings here so knowledge accumulates in one place.
 
+### 2026-06-09 — MNIST λ trade-off sweep (offline, 5 strengths)
+- **Setup:** same MNIST ReLUMLP (784→256→256→10, 512 hidden neurons) / Adam lr 1e-3 / τ
+  exponential 1.0→0.1 / 8 epochs / seed 0 / CPU, swept λ ∈ {0, 0.01, 0.05, 0.1, 0.2} offline
+  via [`scripts/lambda_sweep.py`](../../scripts/lambda_sweep.py).
+- **Result:** accuracy stays ~flat across the whole range while the count of sign-consistent
+  neurons climbs steeply with λ:
+
+  | λ | val acc | test acc | eliminable (q∈{0,1}) | H(q) < 0.05 nats |
+  | --- | --- | --- | --- | --- |
+  | 0.0 | 0.9762 | 0.9794 | 18 | 27 |
+  | 0.01 | 0.9737 | 0.9763 | 45 | 47 |
+  | 0.05 | 0.9778 | 0.9791 | 51 | 86 |
+  | 0.1 | 0.9775 | 0.9766 | 73 | 226 |
+  | 0.2 | 0.9715 | 0.9716 | 104 | 337 |
+
+  ![λ trade-off](assets/lambda_sweep.png)
+- **Takeaway:** the regularizer buys a large increase in removable/near-linear capacity for a
+  tiny accuracy cost — **exactly-eliminable neurons grow 18 → 104 (≈6×)** and near-consistent
+  (H < 0.05 nats) neurons grow **27 → 337 (~⅔ of the network)** from λ=0 to 0.2, while accuracy
+  drops only ~0.5% (val 0.9762 → 0.9715). Even the unregularized baseline (λ=0) already has 18
+  dead neurons. **λ≈0.1 looks like the sweet spot** (73 exactly-eliminable / 226 low-entropy at
+  no measurable accuracy cost). Accuracy is mildly non-monotonic at small λ (single seed —
+  training noise). Next: the same sweep on CIFAR-10, and multi-seed runs to tighten the band.
+
 ### 2026-06-08 — MNIST λ>0 baseline (regularizer + masked surgery)
 - **Setup:** ReLUMLP (784→256→256→10, 512 hidden neurons) / MNIST / λ=0.05 / τ exponential
   1.0→0.1 / Adam lr 1e-3 / 8 epochs / seed 0 / CPU. Config:

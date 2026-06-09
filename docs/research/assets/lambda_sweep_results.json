@@ -1,0 +1,42 @@
+[
+  {
+    "lam": 0.0,
+    "val_acc": 0.9761666666666666,
+    "test_acc": 0.9794,
+    "eliminable": 18.0,
+    "low_entropy": 27.0,
+    "total": 512.0
+  },
+  {
+    "lam": 0.01,
+    "val_acc": 0.9736666666666667,
+    "test_acc": 0.9763,
+    "eliminable": 45.0,
+    "low_entropy": 47.0,
+    "total": 512.0
+  },
+  {
+    "lam": 0.05,
+    "val_acc": 0.9778333333333333,
+    "test_acc": 0.9791,
+    "eliminable": 51.0,
+    "low_entropy": 86.0,
+    "total": 512.0
+  },
+  {
+    "lam": 0.1,
+    "val_acc": 0.9775,
+    "test_acc": 0.9766,
+    "eliminable": 73.0,
+    "low_entropy": 226.0,
+    "total": 512.0
+  },
+  {
+    "lam": 0.2,
+    "val_acc": 0.9715,
+    "test_acc": 0.9716,
+    "eliminable": 104.0,
+    "low_entropy": 337.0,
+    "total": 512.0
+  }
+]
