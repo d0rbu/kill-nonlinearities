@@ -71,8 +71,7 @@ def train(
 ) -> TrainResult:
     """Train ``model`` and return its history + written checkpoint paths."""
     logger = logger if logger is not None else NullLogger()
-    device = torch.device(config.train.device)
-    model.to(device)
+    model.to(config.train.device)
 
     steps_per_epoch = len(train_loader)
     total_steps = config.train.epochs * steps_per_epoch
@@ -98,8 +97,8 @@ def train(
     model.train()
     for epoch in range(config.train.epochs):
         for x, y in train_loader:
-            x = x.to(device)
-            y = y.to(device)
+            x = x.to(config.train.device)
+            y = y.to(config.train.device)
             tau = schedule(step)
 
             optimizer.zero_grad()

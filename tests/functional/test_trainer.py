@@ -4,6 +4,7 @@ import dataclasses
 import math
 from pathlib import Path
 
+import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -110,3 +111,5 @@ def test_annealed_tau_steps_keep_grads_and_params_finite(
         assert metric.reg_loss >= 0.0
     for param in result.model.parameters():
         assert torch.isfinite(param).all()
+    # Non-constant schedule reaches tau_end at the final step (spec §4.8).
+    assert result.history[-1].tau == pytest.approx(config.temp_schedule.tau_end)

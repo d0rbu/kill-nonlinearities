@@ -80,7 +80,9 @@ class WandbLogger:
     ``run`` (no second ``wandb.init``). Not unit-tested (spec §7).
     """
 
-    def __init__(self, wandb_config: WandbConfig, run: object | None = None):
+    def __init__(
+        self, wandb_config: WandbConfig, run: object | None = None
+    ):  # pragma: no cover - network glue (spec §7)
         self._config = wandb_config
         self._run = run
 
