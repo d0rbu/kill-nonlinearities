@@ -259,10 +259,12 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   implemented* (`surgery/fold.py`: `ZERO` pruned, `IDENTITY` composed into the next
   layer's weights, unread units trimmed); CNN folding (per-position identities make conv
   layers locally-connected) is still open.
-- [ ] **Phase 3 — visualize the de-nonlinearized network.** Build tools to visualize the
+- [~] **Phase 3 — visualize the de-nonlinearized network.** Build tools to visualize the
   surgered/folded networks — which nonlinearities survive, what the folded linear maps
   compute — and study whether the sparser, folded-layer mechanisms are interpretable
-  (what did the network *actually* need its remaining nonlinearity for?).
+  (what did the network *actually* need its remaining nonlinearity for?). *Tools
+  implemented* (`viz/network.py`: mode composition, conv spatial q-maps, input-space
+  filters of survivors / folded affine maps) with first findings in the log.
 - [ ] **Phase 4 — range analysis across layers (LP/simplex).** From the input ranges and
   the weights, bound each neuron's pre-activation range by solving a per-neuron linear
   program (simplex), then propagate those bounds layer by layer through the whole
@@ -278,6 +280,52 @@ Tracked work, roughly in order. (File these as GitHub issues — see
 
 > Newest entries on top. Each entry: date, what was tried, config (λ, τ schedule, model,
 > data), result, and takeaway. Keep findings here so knowledge accumulates in one place.
+
+### 2026-06-11 — Phase 3: what the de-nonlinearized networks look like
+
+- **Setup:** new viz tools (`viz/network.py`): per-site **mode composition**
+  (exact-dead / near-dead / switching / near-on / exact-on), **spatial q-maps**
+  for conv sites (per-channel heatmaps of per-position hard q), and
+  **input-space filters** (rows of a weight matrix rendered as images — the
+  surviving ReLUs' filters, or a fully folded network's affine map). Gallery
+  generated from on-disk artifacts by
+  [`scripts/denonlin_gallery.py`](../../scripts/denonlin_gallery.py) into
+  [`assets/denonlin/`](assets/denonlin) (MNIST checkpoints at λ ∈ {0.5, 1, 10},
+  CNN per-position q from the committed sweep JSON at λ ∈ {0, 1, 10}).
+- **Finding 1 — the folded MNIST λ=10 network is 10 readable evidence maps.**
+  The fully folded network is one affine map; its rows are per-class templates
+  a human can read: class 0 is a strong *negative* center blob (center ink is
+  anti-evidence for a zero) inside a positive ring, class 1 a positive central
+  vertical stroke, class 3 positive right-side curves. The network's entire
+  computation is now literally visible.
+
+  ![mnist affine templates](assets/denonlin/mnist_affine_templates_lam10.png)
+- **Finding 2 — the nonlinearity the network refuses to give up is stroke
+  contrast.** The 18 layer-1 ReLUs that survive λ=1 are localized, oriented
+  stroke/curve detectors — diagonal strokes with opposite-polarity flanks,
+  horizontal bars, ring segments — markedly cleaner than typical dense-MLP
+  filters. The regularizer appears to distill the network's nonlinear budget
+  into a small set of topology-discriminating features.
+
+  ![mnist surviving filters](assets/denonlin/mnist_surviving_filters_lam1.png)
+- **Finding 3 — per-position conv outcomes are channel-uniform under pressure,
+  and borders fire more.** At λ=10, conv0's q-maps are *spatially flat per
+  channel* (whole channels solid always-on, one solid dead, one uniformly ~0.5
+  "switching everywhere") — the per-position objective resolves into
+  channel-level decisions, visually confirming the granularity-comparison
+  result. At λ=0, deep-site maps (conv2) show *selective* low q with visibly
+  **brighter borders**: padding makes border positions fire more often — a real
+  spatial effect in firing rates, even though conversion *rates* showed no
+  border ring.
+
+  | conv0 q-map at λ=10 (channel-uniform) | conv2 q-map at λ=0 (selective, bright borders) |
+  | --- | --- |
+  | ![conv0 lam10](assets/denonlin/cnn_qmap_conv0_lam10.png) | ![conv2 lam0](assets/denonlin/cnn_qmap_conv2_lam0.png) |
+- **Takeaway:** the de-nonlinearized artifacts are *interpretable in exactly
+  the way phase 3 hoped*: folded linear parts read as evidence templates, and
+  the surviving nonlinearity is a small, visually coherent feature set. The
+  full gallery (15 figures incl. compositions and all three conv sites at three
+  λ) is under `assets/denonlin/`.
 
 ### 2026-06-11 — Phase 2: structural folding — the MNIST λ=10 network folds to a bare affine map
 
