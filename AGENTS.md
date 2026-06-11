@@ -26,9 +26,11 @@ and elimination plan before touching research code.**
 experiment runner/sweep glue are implemented — see
 [docs/architecture/overview.md](docs/architecture/overview.md) for the realized design.
 
-- The work stays **analysis-first plus masked surgery**: flip a neuron's `SelectiveReLU`
-  **mode** (`ZERO`/`IDENTITY`), don't fold or structurally prune — that's a later phase. Do
-  not jump ahead to linear-folding.
+- Surgery has two levels: **masked** (flip a neuron's `SelectiveReLU` **mode** —
+  `ZERO`/`IDENTITY` — the measurement tool) and **structural** (phase 2:
+  `surgery/fold.py` folds a mode-assigned `ReLUMLP` into a smaller `FoldedMLP` —
+  dead units pruned, identity units composed into the next layer). CNN folding is
+  future work (per-position identities make conv layers locally-connected).
 - Don't add features beyond what a task asks for. The
   [roadmap](docs/research/README.md#roadmap) is the plan of record.
 

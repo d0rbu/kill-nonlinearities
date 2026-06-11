@@ -136,8 +136,9 @@ src/kill_nonlinearities/
 ├── analysis/            # hard sign statistics + neuron ranking/selection
 │   ├── statistics.py    #   collect_pre_activations; neuron_stats; collect_history
 │   └── selection.py     #   rank_by_entropy/rank_random; make_k_grid; select_topk; assign_modes
-├── surgery/             # masked-activation surgery (no folding/pruning)
-│   └── apply.py         #   apply_modes; evaluate_accuracy; k_sweep
+├── surgery/             # masked-activation surgery + structural folding (phase 2)
+│   ├── apply.py         #   apply_modes; evaluate_accuracy; k_sweep
+│   └── fold.py          #   fold_mlp/trim_folded → FoldedMLP (ZERO pruned, IDENTITY composed)
 ├── viz/                 # headless figures + GIFs (matplotlib Agg, imageio+pillow)
 │   ├── plots.py
 │   └── animation.py
