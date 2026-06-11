@@ -15,8 +15,11 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from kill_nonlinearities.config import ExperimentConfig
-from kill_nonlinearities.models.mlp import ReLUMLP
-from kill_nonlinearities.regularization.loss import sign_consistency_loss
+from kill_nonlinearities.models.base import PreActModel
+from kill_nonlinearities.regularization.loss import (
+    grouped_sign_consistency_loss,
+    sign_consistency_loss,
+)
 from kill_nonlinearities.training.checkpoint import save_checkpoint
 from kill_nonlinearities.training.logging import Logger, NullLogger
 from kill_nonlinearities.training.schedule import (
@@ -37,7 +40,7 @@ class StepMetrics:
 
 @dataclass
 class TrainResult:
-    model: ReLUMLP
+    model: PreActModel
     history: list[StepMetrics] = field(default_factory=list)
     checkpoint_paths: list[Path] = field(default_factory=list)
 
@@ -63,7 +66,7 @@ def _build_optimizer(
 
 
 def train(
-    model: ReLUMLP,
+    model: PreActModel,
     train_loader: DataLoader,
     val_loader: DataLoader,
     config: ExperimentConfig,
@@ -109,8 +112,17 @@ def train(
             optimizer.zero_grad()
             out = model(x)
             task = criterion(out.logits, y)
-            reg = sign_consistency_loss(
-                out.pre_activations, tau, config.reg.entropy_eps
+            reg = (
+                grouped_sign_consistency_loss(
+                    out.pre_activations,
+                    model.site_group_sizes,
+                    tau,
+                    config.reg.entropy_eps,
+                )
+                if config.reg.granularity == "channel"
+                else sign_consistency_loss(
+                    out.pre_activations, tau, config.reg.entropy_eps
+                )
             )
             total = task + config.reg.lam * reg
             total.backward()

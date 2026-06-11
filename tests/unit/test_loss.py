@@ -7,7 +7,11 @@ from kill_nonlinearities.regularization.entropy import (
     batch_fraction_positive,
     binary_entropy,
 )
-from kill_nonlinearities.regularization.loss import sign_consistency_loss
+from kill_nonlinearities.regularization.loss import (
+    grouped_sign_consistency_loss,
+    sign_consistency_loss,
+)
+from kill_nonlinearities.regularization.surrogate import soft_sign
 
 
 def test_sign_consistency_loss_is_nonnegative_scalar() -> None:
@@ -134,3 +138,69 @@ def test_sign_consistency_loss_rejects_empty_sites() -> None:
     """An empty pre_activations sequence is a usage error (spec §7 [R22])."""
     with pytest.raises(ValueError, match="at least one"):
         sign_consistency_loss([], tau=1.0, eps=1e-6)
+
+
+def test_grouped_loss_with_unit_groups_equals_per_neuron_loss() -> None:
+    """g=1 at every site reduces the grouped loss to sign_consistency_loss."""
+    torch.manual_seed(4)
+    pre = [torch.randn(8, 4), torch.randn(8, 3)]
+    grouped = grouped_sign_consistency_loss(pre, [1, 1], tau=1.0, eps=1e-6)
+    base = sign_consistency_loss(pre, tau=1.0, eps=1e-6)
+    torch.testing.assert_close(grouped, base)
+
+
+def test_grouped_loss_matches_hand_computed_pooling() -> None:
+    """One site, N=4, g=2: p pools sigmoid over batch AND the 2-neuron group."""
+    tau = 1.0
+    eps = 1e-6
+    z = torch.tensor([[1.0, -1.0, 0.5, 2.0], [-2.0, 2.0, -0.5, 1.0]])
+    s = soft_sign(z, tau)
+    p = torch.stack(
+        [s[:, 0:2].mean(), s[:, 2:4].mean()]  # one pooled p per group
+    ).clamp(eps, 1.0 - eps)
+    expected = binary_entropy(p).mean()
+    out = grouped_sign_consistency_loss([z], [2], tau=tau, eps=eps)
+    torch.testing.assert_close(out, expected)
+
+
+def test_grouped_loss_penalizes_mixed_direction_consistent_group() -> None:
+    """The conv-spec counterexample: per-neuron loss ~0, grouped loss ~ln 2.
+
+    Two neurons in one group, each perfectly sign-consistent across the batch
+    but in OPPOSITE directions: the per-neuron loss saturates to ~0 while the
+    channel-pooled loss reads p=0.5 and pays maximal entropy — the deliberate
+    semantic difference between the two granularities.
+    """
+    tau = 0.1
+    eps = 1e-6
+    # sigmoid(+-2 / 0.1) saturates to exactly 1.0 / 0.0 in float32.
+    z = torch.tensor([[2.0, -2.0], [2.0, -2.0], [2.0, -2.0], [2.0, -2.0]])
+    per_neuron = sign_consistency_loss([z], tau=tau, eps=eps)
+    grouped = grouped_sign_consistency_loss([z], [2], tau=tau, eps=eps)
+    assert per_neuron.item() < 1e-4
+    torch.testing.assert_close(grouped, torch.tensor(0.5).log().neg())  # ln 2
+
+
+def test_grouped_loss_finite_gradient_under_saturation() -> None:
+    """Saturated groups get finite (zero) gradients via the clamp ([R1])."""
+    z = torch.full((4, 4), 2.0, dtype=torch.float32, requires_grad=True)
+    loss = grouped_sign_consistency_loss([z], [2], tau=0.1, eps=1e-6)
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert z.grad is not None
+    torch.testing.assert_close(z.grad, torch.zeros_like(z))
+
+
+def test_grouped_loss_rejects_empty_sites() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        grouped_sign_consistency_loss([], [], tau=1.0, eps=1e-6)
+
+
+def test_grouped_loss_rejects_mismatched_group_sizes_length() -> None:
+    with pytest.raises(ValueError, match="entries for"):
+        grouped_sign_consistency_loss([torch.randn(4, 4)], [2, 2], tau=1.0, eps=1e-6)
+
+
+def test_grouped_loss_rejects_non_dividing_group_size() -> None:
+    with pytest.raises(ValueError, match="must divide"):
+        grouped_sign_consistency_loss([torch.randn(4, 4)], [3], tau=1.0, eps=1e-6)

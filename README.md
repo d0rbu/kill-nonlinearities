@@ -19,8 +19,8 @@ entropy `H(pᵢ)`** to drive each neuron toward consistently-positive or consist
 ## Status
 
 🚧 **Phase 1a in progress.** The regularizer, models, training, data, analysis, and
-**masked-activation surgery** are implemented per the
-[phase-1a spec](docs/specs/2026-06-08-phase1a-regularizer-and-surgery-design.md). Real
+**masked-activation surgery** are implemented — see the
+[architecture overview](docs/architecture/overview.md) for the realized design. Real
 MNIST/CIFAR runs (λ>0) and their experiment-log entries are landing. See the
 [roadmap](docs/research/README.md#roadmap).
 
@@ -53,7 +53,6 @@ kill-nonlinearities/
 ├── pyproject.toml           # project + uv/ruff/ty/pytest/coverage config
 ├── docs/                    # hierarchical documentation (start at docs/README.md)
 │   ├── research/            # the method, the math, and the experiment log
-│   ├── specs/               # dated design specs (phase-1a design of record)
 │   ├── development/         # setup, tooling, testing, contributing
 │   └── architecture/        # realized code structure
 ├── src/kill_nonlinearities/ # the package (models, regularization, training, data, analysis, surgery, viz, experiments)
@@ -66,7 +65,6 @@ kill-nonlinearities/
 - 🔬 [`docs/research/README.md`](docs/research/README.md) — the research idea, method, and log
 - 🛠️ [`docs/development/`](docs/development/README.md) — environment, tooling, testing, contributing
 - 🏗️ [`docs/architecture/`](docs/architecture/README.md) — realized code structure
-- 📐 [`docs/specs/`](docs/specs/2026-06-08-phase1a-regularizer-and-surgery-design.md) — the phase-1a design spec
 - 🤖 [`AGENTS.md`](AGENTS.md) — conventions for humans and coding agents
 
 ## Tooling

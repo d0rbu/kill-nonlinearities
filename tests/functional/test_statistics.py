@@ -36,11 +36,20 @@ def test_collect_pre_activations_concatenates_over_batches() -> None:
     site = model.site_names[0]
     assert collected[site].shape == (5, 3)
 
-    # Bit-exact against a single forward of the full batch (same model(x) path).
+    # Bit-exact against forwards with the loader's own batching (the same
+    # model(x) path on the same shapes -> the same kernels, so exact equality
+    # is guaranteed; this is the invariant analysis/surgery rely on, I2).
     model.eval()
     with torch.no_grad():
-        ref = model(x).pre_activations[0]
-    torch.testing.assert_close(collected[site], ref, rtol=0, atol=0)
+        ref_batched = torch.cat([model(xb).pre_activations[0] for xb, _ in loader])
+    torch.testing.assert_close(collected[site], ref_batched, rtol=0, atol=0)
+
+    # A single full-batch forward agrees only up to float reassociation: the
+    # batch size selects the GEMM kernel/reduction order, which torch does not
+    # keep bitwise-stable (1-ULP drift observed on the macOS arm64 cp313 wheel).
+    with torch.no_grad():
+        ref_full = model(x).pre_activations[0]
+    torch.testing.assert_close(collected[site], ref_full)
 
 
 def test_neuron_stats_vs_hand_computed() -> None:

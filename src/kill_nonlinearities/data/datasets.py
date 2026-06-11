@@ -38,10 +38,18 @@ def build_transform(dataset: str) -> transforms.Compose:
 
 
 def _make_synthetic_split(
-    *, size: int, input_dim: int, output_dim: int, generator: torch.Generator
+    *,
+    size: int,
+    shape: tuple[int, ...],
+    output_dim: int,
+    generator: torch.Generator,
 ) -> TensorDataset:
-    """A Gaussian-input TensorDataset with uniform random integer labels (no network)."""
-    x = torch.randn(size, input_dim, generator=generator)
+    """A Gaussian-input TensorDataset with uniform random integer labels (no network).
+
+    ``shape`` is the per-sample input shape: ``(input_dim,)`` for MLPs,
+    ``(in_channels, image_size, image_size)`` for CNNs (conv spec 2026-06-10).
+    """
+    x = torch.randn(size, *shape, generator=generator)
     y = torch.randint(0, output_dim, (size,), generator=generator)
     return TensorDataset(x, y)
 
@@ -56,15 +64,20 @@ def _build_train_and_test(config: ExperimentConfig) -> tuple[Dataset, Dataset]:
     if dataset == "synthetic":
         gen = torch.Generator()
         gen.manual_seed(config.data.split_seed)
+        shape = (
+            (config.model.in_channels, config.model.image_size, config.model.image_size)
+            if config.model.kind == "cnn"
+            else (config.model.input_dim,)
+        )
         train = _make_synthetic_split(
             size=_SYNTHETIC_TRAIN_SIZE,
-            input_dim=config.model.input_dim,
+            shape=shape,
             output_dim=config.model.output_dim,
             generator=gen,
         )
         test = _make_synthetic_split(
             size=_SYNTHETIC_TEST_SIZE,
-            input_dim=config.model.input_dim,
+            shape=shape,
             output_dim=config.model.output_dim,
             generator=gen,
         )
@@ -191,10 +204,12 @@ def select_probe_neurons(model: object, num: int, seed: int) -> list[tuple[str, 
 def make_probe_batch(loader: DataLoader, size: int, seed: int) -> Tensor:
     """Return a fixed, seeded batch of ``size`` inputs from ``loader``'s dataset (spec §4.9).
 
-    Inputs only (no labels), flattened to ``[size, input_dim]``. Deterministic in
-    ``seed`` and identical across calls / checkpoints / sweep runs ``[R25]`` so a
-    probe GIF reflects weight evolution only. If ``size`` exceeds the dataset, all
-    samples are returned.
+    Inputs only (no labels), stacked in their **native per-sample shape** (flat
+    vectors for MLP datasets, ``[C, H, W]`` images for CNN ones — ``ReLUMLP``
+    flattens internally; conv spec 2026-06-10). Deterministic in ``seed`` and
+    identical across calls / checkpoints / sweep runs ``[R25]`` so a probe GIF
+    reflects weight evolution only. If ``size`` exceeds the dataset, all samples
+    are returned.
     """
     dataset = loader.dataset
     n = len(dataset)  # ty: ignore[invalid-argument-type]
@@ -202,5 +217,5 @@ def make_probe_batch(loader: DataLoader, size: int, seed: int) -> Tensor:
     gen = torch.Generator()
     gen.manual_seed(seed)
     order = torch.randperm(n, generator=gen)[:count].tolist()
-    inputs = [torch.as_tensor(dataset[i][0]).flatten() for i in order]
+    inputs = [torch.as_tensor(dataset[i][0]) for i in order]
     return torch.stack(inputs)

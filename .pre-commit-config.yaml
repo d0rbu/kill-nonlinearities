@@ -14,7 +14,11 @@ repos:
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
-        args: ["--maxkb=1024"]
+        # 8 MB: sweep results JSONs (committed data records under
+        # docs/research/assets/) carry per-neuron q arrays and reach ~4-5 MB
+        # for per-position CNN runs. Still guards against accidental
+        # checkpoint/dataset commits (tens to hundreds of MB).
+        args: ["--maxkb=8192"]
       - id: mixed-line-ending
         args: ["--fix=lf"]
 

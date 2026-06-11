@@ -11,11 +11,34 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class ModelConfig:
-    """ReLU MLP architecture (spec §3, §4.3)."""
+    """Model architecture: ReLU MLP or ReLU CNN (spec §3, §4.3; conv spec 2026-06-10).
+
+    ``kind="mlp"`` (default) uses ``input_dim``/``hidden_dims`` and ignores the
+    conv fields; ``kind="cnn"`` uses ``in_channels``/``image_size``/
+    ``conv_channels`` for the conv blocks and ``hidden_dims`` for the FC head
+    (``input_dim`` is ignored — the head's fan-in is derived).
+    """
 
     input_dim: int
     hidden_dims: tuple[int, ...] = (256, 256)
     output_dim: int = 10
+    kind: str = "mlp"
+    in_channels: int = 3
+    image_size: int = 32
+    conv_channels: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"mlp", "cnn"}:
+            raise ValueError(f"kind must be 'mlp' or 'cnn', got {self.kind!r}")
+        if self.kind == "cnn":
+            if not self.conv_channels:
+                raise ValueError("cnn models require a non-empty conv_channels")
+            down = 2 ** len(self.conv_channels)
+            if self.image_size % down != 0:
+                raise ValueError(
+                    f"image_size {self.image_size} must be divisible by {down} "
+                    f"(one 2x2 max-pool per conv block)"
+                )
 
 
 @dataclass(frozen=True)
@@ -44,10 +67,25 @@ class TempScheduleConfig:
 
 @dataclass(frozen=True)
 class RegConfig:
-    """Sign-consistency regularizer configuration (spec §3, §4.4 [R1])."""
+    """Sign-consistency regularizer configuration (spec §3, §4.4 [R1]).
+
+    ``granularity`` selects the loss's pooling unit (conv spec 2026-06-10
+    addendum): ``"neuron"`` (default) takes the entropy of each scalar unit's
+    batch-mean ``p_i``; ``"channel"`` pools each conv channel's positions into
+    the sample dimension before the entropy (groups of size 1 elsewhere, so it
+    equals ``"neuron"`` for MLP/fc sites). Analysis and surgery stay per-neuron
+    either way — the knob changes only the training incentive.
+    """
 
     lam: float = 0.0
     entropy_eps: float = 1e-6
+    granularity: str = "neuron"
+
+    def __post_init__(self) -> None:
+        if self.granularity not in {"neuron", "channel"}:
+            raise ValueError(
+                f"granularity must be 'neuron' or 'channel', got {self.granularity!r}"
+            )
 
 
 @dataclass(frozen=True)

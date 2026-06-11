@@ -21,16 +21,16 @@ and elimination plan before touching research code.**
 
 ## Status & scope
 
-🚧 **Phase 1a in progress.** The regularizer, models (`SelectiveReLU` + `ReLUMLP`), training,
-data, analysis, **masked-activation surgery**, viz, and the experiment runner/sweep glue are
-implemented per [`docs/specs/2026-06-08-phase1a-regularizer-and-surgery-design.md`](docs/specs/2026-06-08-phase1a-regularizer-and-surgery-design.md).
+🚧 **Phase 1a in progress.** The regularizer, models (`SelectiveReLU` + `ReLUMLP` +
+`ReLUCNN`), training, data, analysis, **masked-activation surgery**, viz, and the
+experiment runner/sweep glue are implemented — see
+[docs/architecture/overview.md](docs/architecture/overview.md) for the realized design.
 
 - The work stays **analysis-first plus masked surgery**: flip a neuron's `SelectiveReLU`
   **mode** (`ZERO`/`IDENTITY`), don't fold or structurally prune — that's a later phase. Do
   not jump ahead to linear-folding.
-- Don't add features beyond what a task asks for. The [roadmap](docs/research/README.md#roadmap)
-  and the [phase-1a spec](docs/specs/2026-06-08-phase1a-regularizer-and-surgery-design.md) are
-  the plan of record.
+- Don't add features beyond what a task asks for. The
+  [roadmap](docs/research/README.md#roadmap) is the plan of record.
 
 ## Repository map
 
@@ -45,7 +45,6 @@ docs/                     hierarchical docs — start at docs/README.md
   research/README.md         the method, the math, and the experiment log
   development/               setup · tooling · testing · contributing
   architecture/overview.md   realized code layout + key design decisions
-  specs/                     dated design specs (phase-1a is the design of record)
 src/kill_nonlinearities/  the package (models, regularization, training, data, analysis, surgery, viz, experiments)
 tests/                    the test suite (unit / functional / integration)
 ```
@@ -54,8 +53,8 @@ tests/                    the test suite (unit / functional / integration)
 
 - **`uv` for everything.** Never `pip install` into the env. Add deps with `uv add` /
   `uv add --dev`; run things with `uv run`.
-- **Python 3.14** (pinned in `.python-version`; floor `>=3.13`). `uv` installs the
-  interpreter on first `uv sync`.
+- **Python 3.13** (pinned in `.python-version`; floor `>=3.13`; see Gotchas for why
+  the pin sits at the floor). `uv` installs the interpreter on first `uv sync`.
 - **`torch` defaults to the CPU build** (the PyPI Linux wheel is the multi-GB CUDA build).
   See [setup.md](docs/development/setup.md) to switch to CUDA.
 - **Runtime deps** now include `torchvision`, `wandb`, `matplotlib`, `imageio`, `pillow`
@@ -105,8 +104,9 @@ Full recipe list: [`docs/development/tooling.md`](docs/development/tooling.md).
 ## Gotchas
 
 - `ty` is **beta**: diagnostics can change between releases; it's pinned for a reason.
-- Python 3.14 currently resolves to **3.14.0rc3** via `uv`'s index; if a dependency lacks a
-  3.14 wheel, fall back to `uv python pin 3.13` (everything works on the floor).
+- The pin sits at **3.13** because a `3.14` pin resolves to an rc build on some `uv`
+  versions (brew's 0.8.x serves 3.14.0rc2, where the `wandb`→`pydantic` import crashes).
+  Re-raise the pin once 3.14 final is universally served and the deps import cleanly.
 - The CPU `torch` index is set in `pyproject.toml`; a plain `uv sync` will **not** pull CUDA.
 - Roadmap items aren't filed as GitHub issues yet — see
   [contributing.md](docs/development/contributing.md#roadmap--issues).

@@ -9,7 +9,7 @@ at the top; what we actually learn from experiments accumulates in
 
 > **Status:** Phase 1a **in progress** — the regularizer, training, analysis, and
 > masked-activation surgery are implemented (see the
-> [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md)). Real
+> [architecture overview](../architecture/overview.md)). Real
 > MNIST/CIFAR results land in the [experiment log](#experiment-log) as runs complete.
 
 ---
@@ -250,17 +250,292 @@ Tracked work, roughly in order. (File these as GitHub issues — see
 - [~] **Phase 1a — regularizer + analysis + masked surgery on a toy MLP** (MNIST/CIFAR).
   *In progress.* $\mathcal{L}_{\text{reg}}$, τ-annealing, λ-sweep via wandb Sweeps, the
   trade-off curve, $q_i$ histograms, and masked-activation surgery (accuracy-vs-k on val+test)
-  are implemented per the [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md).
-  Models emit their own pre-activations (see [architecture](../architecture/overview.md)).
+  are implemented. Models emit their own pre-activations (see
+  [architecture](../architecture/overview.md)).
 - [ ] **Phase 1b — small transformer (language modeling).** Apply the same regularizer to the
   MLP/FFN blocks of a small transformer.
 - [ ] **Phase 2 — structural surgery.** Fold linearized layers and prune dead units; measure
   retained accuracy. (Phase 1a already does the *masked* form.)
+- [ ] **Phase 3 — visualize the de-nonlinearized network.** Build tools to visualize the
+  surgered/folded networks — which nonlinearities survive, what the folded linear maps
+  compute — and study whether the sparser, folded-layer mechanisms are interpretable
+  (what did the network *actually* need its remaining nonlinearity for?).
+- [ ] **Phase 4 — range analysis across layers (LP/simplex).** From the input ranges and
+  the weights, bound each neuron's pre-activation range by solving a per-neuron linear
+  program (simplex), then propagate those bounds layer by layer through the whole
+  network. (Interval/LP-based bound propagation in the spirit of NN-verification
+  tooling; ranges also certify sign-consistency *for the whole input box*, not just the
+  data sample — a stronger guarantee than the empirical $q_i$.)
+- [ ] **Phase 5 — decompile to conditionals.** Use the range analysis to translate the
+  weights + surviving nonlinearities into explicit conditionals (decision-tree-like
+  structure): a ReLU whose range crosses zero is a branch; everything between branches
+  is an affine map.
 
 ## Experiment log
 
 > Newest entries on top. Each entry: date, what was tried, config (λ, τ schedule, model,
 > data), result, and takeaway. Keep findings here so knowledge accumulates in one place.
+
+### 2026-06-10 — per-position vs channel-pooled regularizer: aggregates congruent, fine structure differs exactly as predicted
+
+- **Setup:** the channel-pooled arm (`RegConfig.granularity="channel"`,
+  [`configs/cifar10-cnn-chanreg.json`](../../configs/cifar10-cnn-chanreg.json) —
+  identical CNN/grid/seed to the per-position sweep below; only the loss pooling
+  differs; analysis/surgery stay per-position in both). λ=0 reproduces the
+  per-position λ=0 run *exactly* (val 0.7518, 1,113 dead) — same seed, reg
+  inert — so all λ>0 differences are attributable to the pooling. Assets under
+  `cifar10_cnn_chanreg_sweep*` (figures visually near-identical to the
+  per-position arm's).
+- **Result (aggregates are congruent).** At every λ the two arms match in
+  accuracy and conversion within single-seed noise — e.g. λ=2: val 0.672 vs
+  0.665, dead 8,974 vs 9,559, always-on 5,067 vs 5,537; λ=10: val 0.620 vs
+  0.625, always-on 30,016 vs 31,188. The asymmetry flip (dead→always-on
+  dominated) and the non-monotonic λ=10 recovery reproduce under both.
+- **Result (the fine structure differs exactly as the incentive analysis
+  predicted).** Within-channel statistics over the conv sites:
+  - **Mixed-direction channels** (holding both exact-dead and exact-on
+    positions — rewardable per-position, *unrewardable* under pooling): the
+    per-position arm grows them (7 in conv2 at λ=5, 2 at λ=10); the channel arm
+    produces **zero, at every λ and site**.
+  - **Within-channel q-dispersion** is uniformly tighter under pooling (conv2:
+    0.045 → 0.025 at λ=2, 0.027 → 0.002 at λ=5, 0.008 → 0.001 at λ=10) and
+    **fully-saturated whole channels** are slightly more numerous (conv2 at
+    λ=10: 50 vs 43; conv1: 17 vs 14) — more conv-foldable structure, as
+    intended by that objective.
+  - **Why aggregates still match:** even under the per-position objective,
+    within-channel dispersion is already small (0.005–0.09) — a weight-tied
+    filter on shared data statistics makes positions lean together naturally.
+    The configuration the channel objective punishes (mixed-direction
+    consistency) is *real but rare* (≤7 of 128 channels), so the two losses
+    push in nearly the same direction nearly everywhere.
+- **Takeaway:** per-position stays the right default — it measures scalar
+  sign-consistency honestly and permits the (rare) richer configurations — while
+  channel pooling is a viable *structured* variant that buys whole-channel
+  saturation (useful when phase-2 folding wants conv-preserving structure) at no
+  accuracy cost and no aggregate consistency loss. The original worry
+  ("channel pooling forces entire channels to 1 or 0") is confirmed
+  *mechanistically* (zero mixed channels, tighter dispersion) but turns out to
+  be near-harmless *empirically* on CIFAR, because conv channels are largely
+  direction-coherent anyway.
+
+### 2026-06-10 — CIFAR-10 CNN λ sweep (per-position): the asymmetry flips, and nonlinearity concentrates in conv0
+
+- **Setup:** first `ReLUCNN` sweep (per-position neuron semantics — see the
+  [architecture overview](../architecture/overview.md)): conv
+  3→32→64→128 (3×3, pad 1, pool 2) → fc 256 → 10, 620k params, **57,600
+  per-position neurons** (32,768 + 16,384 + 8,192 conv positions + 256 fc) /
+  CIFAR-10 / 12 epochs / seed 0 / the 10-point λ grid / CPU (~10–17 min per
+  run). Config: [`configs/cifar10-cnn.json`](../../configs/cifar10-cnn.json);
+  assets under `cifar10_cnn_sweep*`. Baseline val **0.7518** / test **0.7505**
+  (+23pp over the flat-MLP ceiling — the regularizer finally has real accuracy
+  to protect).
+
+  | λ | val acc | test acc | dead (q=0) | always-on (q=1) | H(q) < 0.05 | knee k (≤0.5pp val cost) |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | 0.0 | 0.7518 | 0.7505 | 1113 | 0 | 1325 | 2880 |
+  | 0.01 | 0.7520 | 0.7503 | 1170 | 0 | 1347 | 2880 |
+  | 0.05 | 0.7438 | 0.7417 | 1189 | 0 | 1375 | 2880 |
+  | 0.1 | 0.7444 | 0.7391 | 1316 | 0 | 1573 | 2880 |
+  | 0.2 | 0.7480 | 0.7485 | 1718 | 0 | 1996 | 2880 |
+  | 0.5 | 0.7414 | 0.7380 | 2409 | 0 | 3351 | 2880 |
+  | 1.0 | 0.7282 | 0.7171 | 4624 | 104 | 7520 | 11520 |
+  | 2.0 | 0.6648 | 0.6506 | 9559 | 5537 | 28463 | 28800 |
+  | 5.0 | 0.5910 | 0.5914 | 7588 | 18468 | 44468 | 48960 |
+  | 10 | 0.6252 | 0.6219 | 7198 | 31188 | 52311 | 51840 |
+
+- **Findings:**
+  1. **The CNN pays for consistency** — the first sloped trade-off curve in this
+     project (the flat MLP was free through λ=10): flat through λ=0.5, then
+     −2.4pp at λ=1, −8.7pp at λ=2, −16pp at λ=5, with a non-monotonic recovery
+     at λ=10 (0.6252; single seed). Its nonlinearity is load-bearing.
+  2. **The dead-vs-passthrough asymmetry flips.** Up to λ=1 conversion is
+     dead-dominated (like every MLP run); from λ=5 it is **always-on dominated**
+     (31,188 on vs 7,198 dead at λ=10 — 54% of all positions exactly always-on).
+     Plausible mechanism: killing a conv position starves every downstream
+     receptive field that reads it, while an always-on (locally linear) position
+     keeps information flowing — under forcing pressure the CNN *linearizes
+     rather than amputates*.
+  3. **Nonlinearity concentrates in conv0.** Per-site near-consistency
+     (H < 0.05 nats) at λ=10: conv1 **100.0%**, conv2 **99.2%**, fc0 **100.0%**
+     (fc is two-thirds exactly dead) — while conv0 keeps **15.9% of its
+     positions genuinely switching** (5,210 of 32,768). The trained-then-pressured
+     CNN reorganizes into [one nonlinear pixel-adjacent feature layer] → [a
+     near-linear deep pipeline]: exactly the "localize the nonlinearity"
+     outcome phase 1 was hypothesizing, now visible at λ≥5.
+  4. **No padding border-ring** (a falsified prediction): border vs interior
+     conversion rates are nearly identical (λ=10 conv0 always-on: 61.5% border
+     vs 54.9% interior; dead rates equal to ~1pp). Positional consistency is
+     data/depth-structured, not boundary-driven.
+  5. **Small λ barely moves the CNN** (1,113 → 2,409 dead across λ=0→0.5, no
+     always-on at all) — unlike the MLP at the same strengths. Per-position conv
+     consistency is expensive to manufacture: the bias is shared per channel, so
+     the regularizer must work through the data's spatial statistics.
+  6. The masking knee marches 2,880 → **51,840 of 57,600** (90% of positions
+     maskable within 0.5pp of that run's baseline at λ=10). Knee values are
+     k-grid-quantized (step 2,880).
+
+  | Trade-off across λ | $q_i$ distribution across λ |
+  | --- | --- |
+  | ![cnn trade-off](assets/cifar10_cnn_sweep.png) | ![cnn q histograms](assets/cifar10_cnn_sweep_q_hist.png) |
+
+  | Accuracy vs k by λ | Val-accuracy surface over (k, λ) |
+  | --- | --- |
+  | ![cnn acc vs k by lambda](assets/cifar10_cnn_sweep_acc_vs_k_by_lambda.png) | ![cnn accuracy surface](assets/cifar10_cnn_sweep_acc_surface.png) |
+
+- **Takeaway:** on an architecture whose accuracy actually depends on its
+  nonlinearity, the regularizer behaves qualitatively differently: it costs
+  accuracy, it prefers passthrough over death (the reverse of the MLP), and it
+  *concentrates* the surviving nonlinearity in the earliest layer rather than
+  spreading thin. λ between 1 and 2 is the phase-change region to resolve next,
+  plus multi-seed bands. The **channel-pooled regularizer arm**
+  (`RegConfig.granularity="channel"`, same grid/seed,
+  [`configs/cifar10-cnn-chanreg.json`](../../configs/cifar10-cnn-chanreg.json))
+  is running for comparison — entry to follow.
+
+### 2026-06-10 — λ pushed to 10 (no collapse, only linearization) + a 4×-wide CIFAR capacity check
+
+- **Setup:** extended both λ-sweeps with **λ ∈ {2, 5, 10}** (the sweep script now *merges*
+  new runs into an existing results JSON, keyed by λ, so only the new points were trained;
+  all `lambda_sweep*` / `cifar10_lambda_sweep*` figures — including in the entry below —
+  now render the full **10-point grid**). Separately, a **capacity check** for the ~52%
+  CIFAR ceiling: [`configs/cifar10-wide.json`](../../configs/cifar10-wide.json) —
+  3072→**1024→1024**→10 (4.9M params vs 0.85M), **30 epochs** (vs 10), same
+  optimizer/τ/seed/batch — run at λ ∈ {0, 0.1} (assets under `cifar10_wide_sweep*`).
+- **Result (λ → 10).** New grid points only (λ ≤ 1 in the entry below); *knee* = largest
+  k within 0.5pp val of the unmasked model:
+
+  | λ | val acc | test acc | eliminable (dead / on) | H(q) < 0.05 | knee k |
+  | --- | --- | --- | --- | --- | --- |
+  | MNIST 2 | 0.9405 | 0.9387 | 220 (146 / 74) | 504 | 486 |
+  | MNIST 5 | 0.9078 | 0.9111 | 322 (176 / 146) | 511 | 486 |
+  | MNIST 10 | 0.9053 | 0.9081 | 375 (214 / 161) | **512** | **512** |
+  | CIFAR 2 | 0.5038 | 0.5045 | 170 (168 / 2) | 274 | 307 |
+  | CIFAR 5 | 0.5056 | 0.4999 | 222 (199 / 23) | 369 | 384 |
+  | CIFAR 10 | 0.4760 | 0.4878 | 274 (209 / 65) | 414 | 435 |
+
+  1. **"λ too large" is a graceful asymptote to linearity, not a collapse.** At λ=10 MNIST
+     has **every neuron sign-consistent** (512/512 below 0.05 nats) and val 0.9053 ≈ the
+     linear-model floor (multinomial logistic regression on MNIST ≈ 0.92; ours is
+     rank-256-bottlenecked) — and the knee reaches **k=512**: the *entire network* can be
+     masked within 0.5pp. CIFAR holds ~0.50–0.52 through λ=5 and dips only to 0.476 at
+     λ=10, with the knee marching 77 → **435/512** (85% maskable).
+  2. **The dead-vs-passthrough asymmetry finally cracks at λ ≥ 2 on CIFAR** (cf. the
+     analysis below): first exact q=1 units (2 → 23 → 65 across λ=2/5/10) and the first
+     layer-1 eliminations ever (0 at λ≤1 → 82 converted at λ=10) — but conversion stays
+     heavily dead-skewed (209 dead vs 65 on at λ=10). Eliminable is mildly non-monotonic
+     (170 at λ=2 < 174 at λ=1): single-seed noise.
+- **Result (wide CIFAR):** at λ=0, val **0.5240** / test **0.5245** vs the small model's
+  0.5104 / 0.5261 — i.e. **5.8× parameters and 3× training bought ≈ +1pp val and nothing
+  on test**. The ~52% is an *architecture* ceiling (flat MLP on raw pixels; logistic
+  regression ≈ 0.40, well-tuned MLPs ≈ 0.55–0.60; the priors that move CIFAR are
+  convolutional, not capacity). Sign-consistency findings scale with width: **506/2048
+  neurons (25%) die naturally at λ=0** (all layer-2, as in the small net) and the
+  unregularized knee is already **819/2048 (40%)**; λ=0.1 raises dead to **795 (39%)** at
+  −1.6pp val, still zero always-on, and layer-1's q-ceiling *tightens* with width (max
+  layer-1 q: 0.54 wide vs 0.58 small at λ=0).
+
+  | Accuracy vs k, wide CIFAR (λ ∈ {0, 0.1}) | $q_i$ distribution, wide CIFAR |
+  | --- | --- |
+  | ![wide cifar acc vs k](assets/cifar10_wide_sweep_acc_vs_k_by_lambda.png) | ![wide cifar q histograms](assets/cifar10_wide_sweep_q_hist.png) |
+- **Takeaway:** λ is safe across three orders of magnitude — its λ→∞ limit is the
+  network's best *linear* approximation, reached smoothly, and its real product is
+  **surgery capacity** (the knee). CIFAR accuracy is not recoverable by width/epochs at
+  this architecture, so the interesting next scale-up is **phase 1b (transformer FFNs)**,
+  not bigger MLPs. Multi-seed error bands remain the top methodological gap.
+
+### 2026-06-09 — CIFAR-10 λ sweep, (k, λ) surfaces, and the dead-vs-passthrough asymmetry
+
+- **Setup:** both base configs ([`configs/mnist.json`](../../configs/mnist.json),
+  [`configs/cifar10.json`](../../configs/cifar10.json) — same models / Adam lr 1e-3 / τ
+  exponential 1.0→0.1 / seed 0 / CPU as the entries below) swept offline across an
+  **extended grid λ ∈ {0, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0}** via the generalized
+  [`scripts/lambda_sweep.py`](../../scripts/lambda_sweep.py) (now takes
+  `--config/--prefix/--lambdas/--plot-only`, saves per-neuron $q_i$ and the full
+  accuracy-vs-k curve per λ, and renders the by-λ overlay, the 3D (k, λ) surface, and
+  per-λ $q_i$ histograms). ~90 s per run on an M4 CPU. Env note: run on Python 3.13 (the
+  documented floor fallback — `wandb`→`pydantic` fails to import on 3.14.0rc2).
+- **Result (CIFAR-10):** baseline accuracy is **flat across the whole λ range** (the MLP's
+  ~52% ceiling is capacity-, not nonlinearity-limited) while dead neurons grow 24 → 174
+  (34% of the network). **Not a single neuron ever reaches exact $q=1$ — at any λ.**
+
+  | λ | val acc | test acc | dead (q=0) | always-on (q=1) | H(q) < 0.05 | max $q_i$ | knee k (≤0.5pp val cost) |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 0.0 | 0.5104 | 0.5261 | 24 | 0 | 40 | 0.592 | 77 |
+  | 0.01 | 0.5130 | 0.5241 | 32 | 0 | 44 | 0.580 | 77 |
+  | 0.05 | 0.5210 | 0.5251 | 54 | 0 | 68 | 0.573 | 77 |
+  | 0.1 | 0.5166 | 0.5211 | 73 | 0 | 92 | 0.595 | 102 |
+  | 0.2 | 0.4978 | 0.5237 | 98 | 0 | 113 | 0.710 | 154 |
+  | 0.5 | 0.5162 | 0.5252 | 159 | 0 | 166 | 0.981 | 179 |
+  | 1.0 | 0.5172 | 0.5199 | 174 | 0 | 209 | 0.999 | 230 |
+
+- **Result (MNIST, same extended grid):** graceful degradation with **no collapse even at
+  λ=1** (val 0.9763 → 0.9510), and — unlike CIFAR — **exact always-on units appear from
+  λ=0.2** (50 → 68 of them), alongside 119 dead at λ=1. By λ=1, 494/512 neurons (96%) sit
+  below 0.05 nats of sign-entropy and the ≤0.5pp-cost masking knee reaches **k=486 of 512**.
+
+  | λ | val acc | test acc | dead (q=0) | always-on (q=1) | H(q) < 0.05 | max $q_i$ | knee k (≤0.5pp val cost) |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 0.0 | 0.9763 | 0.9768 | 17 | 0 | 28 | 0.827 | 51 |
+  | 0.01 | 0.9767 | 0.9796 | 45 | 0 | 48 | 0.935 | 51 |
+  | 0.05 | 0.9743 | 0.9770 | 52 | 0 | 79 | 0.999 | 179 |
+  | 0.1 | 0.9767 | 0.9786 | 69 | 0 | 196 | 0.9998 | 282 |
+  | 0.2 | 0.9723 | 0.9723 | 84 | 50 | 353 | 1.0 | 384 |
+  | 0.5 | 0.9683 | 0.9684 | 97 | 62 | 457 | 1.0 | 461 |
+  | 1.0 | 0.9510 | 0.9542 | 119 | 68 | 494 | 1.0 | 486 |
+
+  | Trade-off across λ (CIFAR-10) | $q_i$ distribution across λ (CIFAR-10) |
+  | --- | --- |
+  | ![cifar trade-off](assets/cifar10_lambda_sweep.png) | ![cifar q histograms](assets/cifar10_lambda_sweep_q_hist.png) |
+
+  | Accuracy vs k by λ (CIFAR-10) | Accuracy vs k by λ (MNIST) |
+  | --- | --- |
+  | ![cifar acc vs k by lambda](assets/cifar10_lambda_sweep_acc_vs_k_by_lambda.png) | ![mnist acc vs k by lambda](assets/lambda_sweep_acc_vs_k_by_lambda.png) |
+
+  | Val-accuracy surface over (k, λ) (CIFAR-10) | Val-accuracy surface over (k, λ) (MNIST) |
+  | --- | --- |
+  | ![cifar accuracy surface](assets/cifar10_lambda_sweep_acc_surface.png) | ![mnist accuracy surface](assets/lambda_sweep_acc_surface.png) |
+
+  | $q_i$ distribution across λ (MNIST) | Trade-off across λ (MNIST, regenerated) |
+  | --- | --- |
+  | ![mnist q histograms](assets/lambda_sweep_q_hist.png) | ![mnist trade-off](assets/lambda_sweep.png) |
+
+- **Why the CIFAR soft-vs-hard plot "stops at 0.5" (the dead-vs-passthrough asymmetry).**
+  The λ=0.05 CIFAR scatter ends at $q \approx 0.57$ because **no neuron fires positive on
+  more than ~57% of validation inputs** — a property of the data, not of the plot or the
+  regularizer. Three measurements pin down the cause:
+  1. **The ceiling exists at λ=0** (max $q$ = 0.592 with no regularizer): plain task
+     training makes every CIFAR neuron a *selective* feature detector that fires on a
+     minority of inputs. The regularizer only amplifies whichever side a neuron already
+     leans toward (the entropy gradient $\log\frac{1-p}{p}$ pushes $p$ to its *nearer*
+     endpoint), and on CIFAR the task leaves nothing leaning positive.
+  2. **Initialization already differs by dataset geometry.** Untrained nets (seed 0):
+     CIFAR layer-1 $q$ is pinned to [0.38, 0.61] — normalized natural images have high
+     variance in every direction, so every random hyperplane splits them ~50/50 — while
+     MNIST layer-1 $q$ spans [0.04, 0.98], because the shared constant background gives
+     many weight directions a deterministic sign from birth. (Layer-2 $q$ starts wide,
+     [0, 1], for both; CIFAR *training* then compresses it below 0.6.)
+  3. **Per-layer split:** every exactly-eliminable CIFAR neuron at every λ is a
+     **layer-2 dead unit**; layer 1 yields zero $q \in \{0,1\}$ neurons at any λ (its max
+     $q$ is 0.73 even at λ=1). MNIST eliminates in both layers and converts both ways.
+
+  Mechanistically the two endpoints are not symmetric: a dead unit is an **absorbing
+  state** (no task gradient flows through an always-off ReLU, while the regularizer —
+  acting on $z$ through $\sigma(z/\tau)$ — keeps pushing it deeper negative, unopposed),
+  whereas exact $q=1$ is a **hard-margin constraint** ($z > 0$ strictly on *every* sample)
+  that live task gradients keep perturbing — visible on MNIST as neurons hovering at
+  $q = 0.999$ (λ=0.05) and 5999/6000 (λ=0.1) before exact $q=1$ units finally appear at
+  λ≥0.2. On CIFAR the regularizer does drag a tail upward at high λ (max $q$: 0.59 → 0.98
+  → 0.999 across 0.2/0.5/1.0) but never lands one.
+- **Takeaway:** the regularizer enforces *consistency*; the task and data geometry choose
+  *which sign*. On natural images at this scale "killing nonlinearities" currently means
+  **pruning dead width, not linearizing passthroughs** — relevant for phase 2, since
+  layer-folding needs $q=1$ units. If we want passthroughs on CIFAR, candidate knobs:
+  positive bias init, slower/laxer τ anneal, or an endpoint-asymmetric penalty. The λ
+  knob's real effect is on the **surgery curve**: the accuracy-vs-k knee moves from
+  k=51 → 486 (MNIST) and k=77 → 230 (CIFAR-10) as λ goes 0 → 1, with the entire λ ≤ 1
+  range essentially free on CIFAR and ≤2.5pp on MNIST. Single-seed counts at high λ are
+  noticeably run-to-run sensitive (cf. λ=0.2 MNIST here vs. the 5-point sweep below);
+  multi-seed bands are the next tightening step.
 
 ### 2026-06-09 — MNIST λ trade-off sweep (offline, 5 strengths)
 - **Setup:** same MNIST ReLUMLP (784→256→256→10, 512 hidden neurons) / Adam lr 1e-3 / τ
@@ -278,6 +553,11 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   | 0.2 | 0.9715 | 0.9716 | 104 | 337 |
 
   ![λ trade-off](assets/lambda_sweep.png)
+
+  *(Note: `lambda_sweep.png` / `lambda_sweep_results.json` were regenerated later the same
+  day with the grid extended to λ ∈ {…, 0.5, 1.0} — see the entry above. Re-run counts
+  differ from this table by a few neurons at the same λ: single-seed, thread-count-sensitive
+  training.)*
 - **Takeaway:** the regularizer buys a large increase in removable/near-linear capacity for a
   tiny accuracy cost — **exactly-eliminable neurons grow 18 → 104 (≈6×)** and near-consistent
   (H < 0.05 nats) neurons grow **27 → 337 (~⅔ of the network)** from λ=0 to 0.2, while accuracy

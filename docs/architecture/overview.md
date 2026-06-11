@@ -2,8 +2,7 @@
 
 [← Architecture](README.md) · [← Documentation hub](../README.md)
 
-> **Status:** Phase 1a is **in progress**. The realized layout below matches the
-> [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md); the
+> **Status:** Phase 1a is **in progress**. The
 > `regularization/`, `models/`, `training/`, `data/`, `analysis/`, `surgery/`, `viz/`, and
 > `experiments/` packages exist. This document tracks the realized structure and the
 > load-bearing design decisions.
@@ -37,7 +36,7 @@ their forward output.
 - **No lifecycle bugs.** Hooks leak if not removed, fire in surprising orders, and interact
   badly with `torch.compile`, data-parallel wrappers, and module surgery.
 
-**The realized interface** (frozen by the [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md)):
+**The realized interface** (frozen since phase 1a):
 
 ```python
 from dataclasses import dataclass
@@ -51,7 +50,7 @@ class ForwardOutput:
     """A forward pass plus the pre-ReLU activations the regularizer consumes."""
 
     logits: Tensor                       # [B, C]
-    pre_activations: tuple[Tensor, ...]  # one [B, N_ℓ] per SelectiveReLU site, forward order
+    pre_activations: tuple[Tensor, ...]  # one [M, N_ℓ] per SelectiveReLU site, forward order
     site_names: tuple[str, ...]          # stable ids aligned with pre_activations, e.g. ("relu0", "relu1")
 
 
@@ -82,6 +81,34 @@ properties re-cast them to `list[nn.Linear]` / `list[SelectiveReLU]` while retur
 same live, registered modules (so callers can write `model.activations[i].set_modes(...)`).
 The regularizer consumes `output.pre_activations` directly.
 
+Both models subclass **`PreActModel`** (`models/base.py`) — the
+emits-its-own-pre-activations contract that trainer/analysis/surgery signatures accept —
+and are built via `build_model(config)` dispatching on `ModelConfig.kind`.
+
+## Key decision: a conv "neuron" is an individual position, not a channel
+
+For **`ReLUCNN`** a "neuron" is an **individual output position** `(c, h, w)`,
+statistically identical to an MLP neuron — its `q_i` is sampled over the **batch only**.
+Each conv site flattens its pre-activations to `[B, C·H·W]` (index
+`i = (c·H + h)·W + w`), applies its `SelectiveReLU(C·H·W)` on that view, and reshapes
+back before pooling — elementwise ops keep the flattened path bit-identical to
+`relu(conv(x))` (invariant I1), the `[M, N_ℓ]` contract above holds unchanged, and
+per-position `ZERO`/`IDENTITY` masking stays bit-exact.
+
+**Why not per-channel** (pooling a channel's positions into the sample dimension): that
+statistic *mismeasures* sign-consistency. A channel whose top-half positions are
+always-positive and bottom-half always-negative is perfectly sign-consistent at scalar
+level — fully eliminable (`IDENTITY` above, `ZERO` below, bit-exact) — yet its pooled
+`p ≈ 0.5` earns the maximal entropy penalty, and the gradient pushes the
+minority-direction positions to flip their already-consistent sign. Per-position keeps
+the "batch" meaning *data samples* (the faithful generalization of the MLP math) and is
+the granularity the range-analysis/decompilation phases consume. Channel-level views
+stay **derivable** (`q_c` = the mean of its positions' `q`s; channel masking = a uniform
+position mask), and a channel-pooled regularizer remains available as an explicit
+experimental arm via `RegConfig.granularity="channel"`
+(`grouped_sign_consistency_loss`; groups of size 1 reduce exactly to the per-neuron
+loss). Empirically the two arms produce congruent aggregates — see the experiment log.
+
 ## Module layout
 
 ```
@@ -89,9 +116,12 @@ src/kill_nonlinearities/
 ├── __init__.py          # package marker + __version__
 ├── config.py            # frozen dataclasses (ModelConfig, …, ExperimentConfig)
 ├── models/              # networks that EMIT pre-activations (no hooks)
+│   ├── __init__.py      #   build_model(ModelConfig) factory (kind: mlp | cnn)
 │   ├── outputs.py       #   ForwardOutput (frozen, eq=False)
 │   ├── activations.py   #   ActivationMode; SelectiveReLU (int64 mode buffer)
-│   └── mlp.py           #   ReLUMLP(ModelConfig) → ForwardOutput
+│   ├── base.py          #   PreActModel — the pre-activation contract
+│   ├── mlp.py           #   ReLUMLP(ModelConfig) → ForwardOutput
+│   └── cnn.py           #   ReLUCNN(ModelConfig) → ForwardOutput (neuron = (c,h,w) position)
 ├── regularization/      # the sign-consistency loss, as pure functions
 │   ├── surrogate.py     #   soft_sign(z, tau)
 │   ├── entropy.py       #   binary_entropy; batch/hard_fraction_positive; sign_entropy
