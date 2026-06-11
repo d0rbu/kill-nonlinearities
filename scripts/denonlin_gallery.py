@@ -39,6 +39,7 @@ from kill_nonlinearities.surgery.fold import fold_mlp, folded_stats, trim_folded
 from kill_nonlinearities.training.checkpoint import load_checkpoint
 from kill_nonlinearities.viz.network import (
     plot_class_q_matrix,
+    plot_folded_dag,
     plot_input_filters,
     plot_mode_composition,
     plot_spatial_q_map,
@@ -126,6 +127,17 @@ def mnist_gallery() -> None:
                 title=f"MNIST λ={lam:g}: the folded network IS this affine map "
                 "(per-class templates)",
             )
+        elif sum(fstats.nonlinear_widths) <= 64:
+            # The intensional program view: the folded network as a circuit DAG.
+            plot_folded_dag(
+                folded,
+                OUT_DIR / f"mnist_dag_lam{lam:g}.png",
+                image_shape=(28, 28),
+                title=(
+                    f"MNIST λ={lam:g}: the folded network as a circuit "
+                    f"({sum(fstats.nonlinear_widths)} surviving ReLUs)"
+                ),
+            )
 
         # Class-indexed firing: which classes does each unit fire for?
         per_class = class_conditional_q(model, val_loader, base.train.device, 10)
@@ -190,11 +202,43 @@ def cnn_class_gallery() -> None:
         )
 
 
+def cifar_mlp_dag() -> None:
+    """The folded CIFAR-10 MLP (λ=10, lowH) as a circuit DAG with RGB glyphs."""
+    base = config_from_json(Path("configs/cifar10.json"))
+    _, val_loader, _ = make_dataloaders(base)
+    model = ReLUMLP(base.model)
+    load_checkpoint(_final_checkpoint(Path("runs") / f"{base.name}-10.0"), model)
+    model.eval()
+    stats = neuron_stats(collect_pre_activations(model, val_loader, base.train.device))
+    widths = {
+        site: int(act.mode.shape[0])
+        for site, act in zip(model.site_names, model.activations, strict=True)
+    }
+    selection = [s for s in stats if s.entropy <= LOW_ENTROPY_NATS]
+    masked = copy.deepcopy(model)
+    apply_modes(masked, assign_modes(selection, tie_break="identity", widths=widths))
+    folded = trim_folded(fold_mlp(masked))
+    fstats = folded_stats(folded)
+    print(f"cifar λ=10: surviving ReLUs {fstats.nonlinear_widths}")
+    plot_folded_dag(
+        folded,
+        OUT_DIR / "cifar_dag_lam10.png",
+        image_shape=(3, 32, 32),
+        class_names=CIFAR_CLASSES,
+        max_units=128,
+        title=(
+            f"CIFAR-10 MLP λ=10: the folded network as a circuit "
+            f"({sum(fstats.nonlinear_widths)} surviving ReLUs)"
+        ),
+    )
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     mnist_gallery()
     cnn_gallery()
     cnn_class_gallery()
+    cifar_mlp_dag()
     for path in sorted(OUT_DIR.iterdir()):
         print(f"wrote {path}")
 

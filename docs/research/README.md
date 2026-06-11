@@ -273,15 +273,167 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   data sample — a stronger guarantee than the empirical $q_i$.) *Implemented* for MLPs
   (`analysis/ranges.py`: mode-aware IBP + per-neuron HiGHS LPs with the triangle
   relaxation; `certified_modes` feeds surgery directly).
-- [ ] **Phase 5 — decompile to conditionals.** Use the range analysis to translate the
+- [~] **Phase 5 — decompile to conditionals.** Use the range analysis to translate the
   weights + surviving nonlinearities into explicit conditionals (decision-tree-like
   structure): a ReLU whose range crosses zero is a branch; everything between branches
-  is an affine map.
+  is an affine map. *Implemented* for MLPs (`analysis/decompile.py`: exact
+  piecewise-affine trees with input-space hyperplane tests, region LPs, leaf budgets,
+  and a pseudo-code renderer); first findings in the log.
 
 ## Experiment log
 
 > Newest entries on top. Each entry: date, what was tried, config (λ, τ schedule, model,
 > data), result, and takeaway. Keep findings here so knowledge accumulates in one place.
+
+### 2026-06-11 — Phase 5 follow-up: data-driven trees, visual trees, and the region census
+
+- **Setup (review follow-ups):** three additions to the decompilation stack.
+  (1) **`decompile_mlp_data`** — the box/LP sign oracle was the reason
+  hull-scale decompilation drowned, so the tree can now be built *from the
+  data*: within a region, a unit's sign is read off the region's actual
+  samples and the recursion branches only where the data flips a unit — the
+  leaves are exactly the linear regions the data occupies. Leaf maps are
+  exact for every building sample (property-tested to 1e-9; a whole-layer GEMM
+  cache makes dataset-scale builds take seconds). (2) **`plot_decision_tree`**
+  — trees as node-and-edge diagrams (branch = tested unit, edges = ≤0 / >0,
+  leaves labeled e.g. by majority class). (3) The toy region figures now draw
+  **every branch hyperplane clipped to its own region** — all region borders,
+  including ones separating a class from itself — and each toy tree ships as
+  a diagram with per-leaf class/sample-count labels.
+- **Result 1 — the MNIST λ=10 network is, in practice, a 95-leaf decision
+  tree.** Data-driven trees built from 8,192 training samples
+  ([`scripts/data_decompile_report.py`](../../scripts/data_decompile_report.py)),
+  evaluated on the full held-out test set:
+
+  | λ | leaves | truncated | test agreement (argmax) | novel-pattern rate | tree test acc |
+  | --- | --- | --- | --- | --- | --- |
+  | 0 | 4,095 (budget) | 9 | 0.8431 | 1.000 | 0.8386 |
+  | 1 | 2,743 | 0 | 0.9696 | 0.224 | 0.9321 |
+  | 10 | **95** | 0 | **0.9999** | 0.016 | 0.9080 |
+
+  At λ=10 the 95-leaf program reproduces the network's prediction on 99.99% of
+  test images at the network's own accuracy (0.9080 vs 0.9081); at λ=0 every
+  test sample lands on a *novel* activation pattern (the leaf affine is never
+  its true linearization) and agreement is only by approximation.
+- **Result 2 — the region census answers "how far can we take this?".**
+  Counting **distinct activation sign patterns** over the full training split
+  (the leaf count a complete data-driven tree would need):
+
+  | model | λ=0 | λ=1 | λ=10 |
+  | --- | --- | --- | --- |
+  | MNIST MLP (54,000 samples) | 54,000 — *one region per sample* | 10,667 | **371** |
+  | CIFAR-10 MLP (45,000 samples) | 45,000 | 45,000 | **44,917** |
+  | CIFAR-10 CNN (45,000 samples) | 45,000 | — | **45,000** |
+
+  ![region census](assets/data_decompile.png)
+
+  The regularizer compresses MNIST's program 146× (54,000 → 371 regions), but
+  **CIFAR stays at ~one-region-per-image at λ=10 in *both* architectures**
+  (MLP: 44,917; CNN: 45,000 — with 98 resp. ~5,200 units still switching, no
+  two natural images share a full sign pattern). CIFAR data-driven trees
+  confirm it: budget-bound at every λ with ~100% novel-pattern rate on test
+  (agreement only 0.32 → 0.49 across λ=0 → 10). So region collapse is
+  substantially a **dataset** property, not just an architecture one: MNIST's
+  137 residual switching units at λ=10 are so correlated that the data lands
+  in 371 patterns, while CIFAR's high-entropy images make even 98 residual
+  bits near-unique per image. Decompiling CIFAR globally needs the census
+  driven down first: stronger/targeted consistency pressure, coarser branch
+  predicates (e.g. channel-level tests), or per-sample local programs.
+- **Result 3 — the class boundary is not the region borders.** Review caught
+  that the toy overlay drew only the ReLU kinks (black) while the red/blue
+  class edge mostly didn't lie on them. That is correct behavior made
+  confusing: within one affine cell both logits are linear, so the **argmax
+  boundary cuts through cell interiors** where the logits cross — no ReLU
+  involved. The overlay now also draws each leaf's logit-crossing segment
+  (crimson): the class boundary appears as a polygon of leaf-internal
+  segments hugging the true circle, visibly distinct from the black kinks.
+
+  | λ=0.3: kinks (black) + class boundary (crimson) | λ=0.3 tree diagram |
+  | --- | --- |
+  | ![toy boundaries](assets/decompile_toy_lam0.3.png) | ![toy tree](assets/decompile_toy_tree_lam0.3.png) |
+- **Result 4 — the intensional view: the folded network as a circuit DAG.**
+  The decision tree is the *extensional* program (it enumerates cases — and
+  the census shows that explodes at λ=0). `viz.network.plot_folded_dag` renders
+  the *intensional* program instead, sparse-circuits style: one column per
+  surviving-ReLU stage (stage-0 glyphs are the units' input-space filters),
+  output logits on the right, edges = the strongest signed weights per
+  consumer, and every carried coordinate **resolved to its origin** (an
+  earlier unit or the raw input — raw-input flow aggregates into one grey
+  "affine bypass" node). MNIST λ=1's whole program is then one readable
+  picture: 18 stroke-detector glyphs voting into 10 logits over a shared
+  affine bypass (`assets/denonlin/mnist_dag_lam1.png`, also λ=0.5 with 55
+  units). **CIFAR works too**: the folded λ=10 CIFAR MLP renders as a 98-unit
+  circuit with RGB filter glyphs wrapped into sub-columns
+  (`assets/denonlin/cifar_dag_lam10.png`) — the *intensional* view stays
+  legible exactly where the extensional tree (44,917 regions) cannot.
+- **Takeaway:** building the trees from the data (rather than the input box)
+  is the right default — the box/LP machinery remains the *certification*
+  layer (a natural hybrid: LP-certify a data-built tree's regions), while the
+  data oracle gives compact, faithful programs where consistency is high. The
+  census (`distinct regions ÷ samples`) is the cleanest single number for
+  "how decompilable is this network", and λ moves it by orders of magnitude on
+  the MLP. For program-as-artifact viewing, prefer the **DAG (intensional)**
+  for anything wide and the tree (extensional) only when the census is small.
+
+### 2026-06-11 — Phase 5: decompiling networks into nested conditionals
+
+- **Setup:** `analysis/decompile.py` (new): **exact piecewise-affine
+  decompilation** of a (mode-aware) `ReLUMLP` over an input box. Within a
+  region where every earlier ReLU's sign is fixed, each pre-activation is
+  affine in the input — so an undetermined unit becomes a **branch on an
+  input-space hyperplane** and leaves are affine maps: the network's exact
+  semantics as a program. Per region each unit's sign is decided by a free
+  closed-form box range, then an exact region LP (HiGHS) only if needed;
+  `max_leaves` bounds the enumeration with explicit `Truncated` nodes (never
+  silently dropped); `evaluate_tree` / `tree_stats` / `render_tree` round it
+  out. Property-tested: trees equal the network to 1e-9 on sampled in-box
+  inputs under random mode assignments; fully-stable networks collapse to a
+  single leaf; routing matches the hyperplane tests; budgets are explicit.
+- **Result 1 — the toy network IS a 19-line program.** The toy is a synthetic
+  2-D dataset — 4,096 points uniform in the box [-2, 2]², labeled by whether
+  they lie inside the unit circle — and a 2→8→2 MLP trained on it
+  ([`scripts/decompile_report.py`](../../scripts/decompile_report.py)); two
+  input dimensions were chosen so the *entire* decompiled program can be
+  printed and its decision regions plotted. It decompiles **exactly**
+  (max |Δ| ≈ 5e-15) into nested conditionals; with the
+  regularizer (λ=0.3) the program shrinks **26 → 19 leaves and depth 7 → 5 at
+  equal accuracy** (0.992 vs 0.990). The full programs are committed
+  (`assets/decompile_toy_lam*.txt`); the regularized one begins:
+
+  ```text
+  if +1.813*x[0] +0.823*x[1] -0.793 > 0:      # relu0[0] fires
+      if -2.160*x[1] -0.046*x[0] -0.160 > 0:  # relu0[1] fires
+          if +2.990*x[1] +2.084*x[0] -1.305 > 0:  # relu0[3] fires
+              return affine(2x2) @ x + bias
+          else: ...
+  ```
+
+  | λ=0: 26 leaves | λ=0.3: 19 leaves |
+  | --- | --- |
+  | ![toy lam0](assets/decompile_toy_lam0.png) | ![toy lam0.3](assets/decompile_toy_lam0.3.png) |
+- **Result 2 — MNIST programs shrink with λ but stay budget-bound at box
+  scale.** Decompiling the trained checkpoints over the s=0.25 centered
+  sub-box (256-leaf budget):
+
+  | λ | branches | leaves | truncated | depth | wall time |
+  | --- | --- | --- | --- | --- | --- |
+  | 0 | 322 | 256 | 67 | **74** | 344 s |
+  | 1 | 282 | 256 | 27 | 38 | 594 s |
+  | 10 | 282 | 255 | 28 | **33** | 303 s |
+
+  Regularization **halves the program depth** (74 → 33) and cuts unresolved
+  regions 2.4×, but every run exhausts the budget — at this box size even the
+  λ=10 network keeps hundreds of in-box-unstable units, exactly matching
+  phase 4's certification collapse at s=0.25. (An exploratory λ=0 run at
+  s=0.5: 228/256 regions truncated at depth 237 after 43 min — dropped from
+  the committed sweep for cost.)
+- **Takeaway:** decompilation is implemented, exact, and consistent with the
+  range analysis: **the network's simplicity lives near the data**. On regions
+  the data actually occupies (toy box; small sub-boxes where phase 4 certifies
+  hundreds of units) the regularizer visibly shrinks the program; global
+  hull-scale decompilation of MNIST-sized nets instead wants the *local* form
+  — decompile around a sample — or certified training. Both are natural next
+  steps, as is folding `Truncated` regions back onto sub-networks.
 
 ### 2026-06-11 — Phase 4: LP range analysis — empirical consistency is not box-certified consistency
 

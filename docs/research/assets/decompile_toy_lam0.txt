@@ -1,0 +1,76 @@
+if +1.859*x[0] +0.965*x[1] -0.525 > 0:  # relu0[0] fires
+    if -1.918*x[1] -0.895*x[0] -0.691 > 0:  # relu0[1] fires
+        return affine(2x2) @ x + bias
+    else:
+        if -2.047*x[0] +1.586*x[1] -0.920 > 0:  # relu0[2] fires
+            return affine(2x2) @ x + bias
+        else:
+            if +3.164*x[1] +1.667*x[0] -1.319 > 0:  # relu0[3] fires
+                if +2.623*x[0] -1.547*x[1] -1.224 > 0:  # relu0[4] fires
+                    if -1.598*x[1] +0.506*x[0] -0.348 > 0:  # relu0[7] fires
+                        return affine(2x2) @ x + bias
+                    else:
+                        return affine(2x2) @ x + bias
+                else:
+                    return affine(2x2) @ x + bias
+            else:
+                if +2.623*x[0] -1.547*x[1] -1.224 > 0:  # relu0[4] fires
+                    if -1.598*x[1] +0.506*x[0] -0.348 > 0:  # relu0[7] fires
+                        return affine(2x2) @ x + bias
+                    else:
+                        return affine(2x2) @ x + bias
+                else:
+                    if -1.598*x[1] +0.506*x[0] -0.348 > 0:  # relu0[7] fires
+                        return affine(2x2) @ x + bias
+                    else:
+                        return affine(2x2) @ x + bias
+else:
+    if -1.918*x[1] -0.895*x[0] -0.691 > 0:  # relu0[1] fires
+        if -2.047*x[0] +1.586*x[1] -0.920 > 0:  # relu0[2] fires
+            if -1.598*x[1] +0.506*x[0] -0.348 > 0:  # relu0[7] fires
+                return affine(2x2) @ x + bias
+            else:
+                return affine(2x2) @ x + bias
+        else:
+            if +2.623*x[0] -1.547*x[1] -1.224 > 0:  # relu0[4] fires
+                if -2.042*x[0] -1.826*x[1] -1.222 > 0:  # relu0[6] fires
+                    return affine(2x2) @ x + bias
+                else:
+                    return affine(2x2) @ x + bias
+            else:
+                if -2.042*x[0] -1.826*x[1] -1.222 > 0:  # relu0[6] fires
+                    if -1.598*x[1] +0.506*x[0] -0.348 > 0:  # relu0[7] fires
+                        return affine(2x2) @ x + bias
+                    else:
+                        return affine(2x2) @ x + bias
+                else:
+                    if -1.598*x[1] +0.506*x[0] -0.348 > 0:  # relu0[7] fires
+                        return affine(2x2) @ x + bias
+                    else:
+                        return affine(2x2) @ x + bias
+    else:
+        if -2.047*x[0] +1.586*x[1] -0.920 > 0:  # relu0[2] fires
+            if +3.164*x[1] +1.667*x[0] -1.319 > 0:  # relu0[3] fires
+                if -2.042*x[0] -1.826*x[1] -1.222 > 0:  # relu0[6] fires
+                    return affine(2x2) @ x + bias
+                else:
+                    return affine(2x2) @ x + bias
+            else:
+                if -2.042*x[0] -1.826*x[1] -1.222 > 0:  # relu0[6] fires
+                    return affine(2x2) @ x + bias
+                else:
+                    return affine(2x2) @ x + bias
+        else:
+            if +3.164*x[1] +1.667*x[0] -1.319 > 0:  # relu0[3] fires
+                return affine(2x2) @ x + bias
+            else:
+                if +2.623*x[0] -1.547*x[1] -1.224 > 0:  # relu0[4] fires
+                    return affine(2x2) @ x + bias
+                else:
+                    if -2.042*x[0] -1.826*x[1] -1.222 > 0:  # relu0[6] fires
+                        return affine(2x2) @ x + bias
+                    else:
+                        if -1.598*x[1] +0.506*x[0] -0.348 > 0:  # relu0[7] fires
+                            return affine(2x2) @ x + bias
+                        else:
+                            return affine(2x2) @ x + bias

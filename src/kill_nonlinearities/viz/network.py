@@ -14,7 +14,7 @@ Headless rendering rule as in ``viz.plots``: Agg before pyplot, no ``show``,
 ``savefig`` then ``close``; every function takes a full file path and returns it.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import matplotlib
@@ -22,12 +22,17 @@ import matplotlib
 matplotlib.use("Agg")  # must precede the pyplot import below
 
 import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from torch import Tensor
 
+from kill_nonlinearities.analysis.decompile import Branch, Leaf, Node, tree_stats
 from kill_nonlinearities.analysis.statistics import NeuronStats
+from kill_nonlinearities.surgery.fold import FoldedMLP
 
 __all__ = [
     "plot_class_q_matrix",
+    "plot_decision_tree",
+    "plot_folded_dag",
     "plot_input_filters",
     "plot_mode_composition",
     "plot_spatial_q_map",
@@ -131,6 +136,278 @@ def plot_spatial_q_map(
     fig.suptitle(f"{title} (0 = always-negative, 1 = always-positive)")
     if image is not None:
         fig.colorbar(image, ax=axes, shrink=0.8, label="hard q")
+    try:
+        fig.savefig(path, dpi=110, bbox_inches="tight")
+    finally:
+        plt.close(fig)
+    return path
+
+
+def plot_decision_tree(
+    node: Node,
+    path: Path,
+    leaf_label: Callable[[Leaf], str] | None = None,
+    title: str = "Decompiled decision tree",
+    max_terminals: int = 128,
+) -> Path:
+    """Render a decompiled tree as a node-and-edge diagram (phase 5).
+
+    Branch nodes show the tested unit (``site[index]``); the left edge is the
+    ``≤ 0`` (dead) side and the right edge the ``> 0`` (fires) side. Leaves
+    show ``leaf_label(leaf)`` (default ``"affine"`` — pass e.g. a majority-
+    class labeler); truncated regions render as ``…``. Refuses trees with more
+    than ``max_terminals`` terminal nodes (the figure would be illegible).
+    """
+    stats = tree_stats(node)
+    n_terminals = stats.n_leaves + stats.n_truncated
+    if n_terminals > max_terminals:
+        raise ValueError(
+            f"tree has {n_terminals} terminal nodes; refusing to render more "
+            f"than {max_terminals} (raise max_terminals to override)"
+        )
+
+    positions: dict[int, tuple[float, float]] = {}
+    next_x = [0.0]
+
+    def _place(current: Node, depth: int) -> float:
+        if isinstance(current, Branch):
+            x_low = _place(current.low, depth + 1)
+            x_high = _place(current.high, depth + 1)
+            x = (x_low + x_high) / 2
+        else:
+            x = next_x[0]
+            next_x[0] += 1.0
+        positions[id(current)] = (x, float(-depth))
+        return x
+
+    _place(node, 0)
+
+    fig, ax = plt.subplots(
+        figsize=(
+            max(6.0, 0.55 * n_terminals),
+            max(3.0, 1.0 * (stats.depth + 1)),
+        )
+    )
+    ax.axis("off")
+
+    def _draw(current: Node) -> None:
+        x, y = positions[id(current)]
+        if isinstance(current, Branch):
+            for child, edge in ((current.low, "≤ 0"), (current.high, "> 0")):
+                cx, cy = positions[id(child)]
+                ax.plot([x, cx], [y, cy], color="grey", lw=0.8, zorder=1)
+                ax.text(
+                    (x + cx) / 2,
+                    (y + cy) / 2,
+                    edge,
+                    fontsize=6,
+                    color="grey",
+                    ha="center",
+                )
+                _draw(child)
+            text, color = f"{current.site}[{current.index}]", "lightyellow"
+        elif isinstance(current, Leaf):
+            text = leaf_label(current) if leaf_label is not None else "affine"
+            color = "lightblue"
+        else:
+            text, color = "…", "mistyrose"
+        ax.text(
+            x,
+            y,
+            text,
+            ha="center",
+            va="center",
+            fontsize=7,
+            zorder=2,
+            bbox={"boxstyle": "round", "fc": color, "ec": "grey"},
+        )
+
+    _draw(node)
+    ax.set_title(title)
+    try:
+        fig.savefig(path, dpi=110, bbox_inches="tight")
+    finally:
+        plt.close(fig)
+    return path
+
+
+def plot_folded_dag(
+    folded: FoldedMLP,
+    path: Path,
+    image_shape: tuple[int, ...] | None = None,
+    class_names: Sequence[str] | None = None,
+    top_edges: int = 4,
+    title: str = "Folded network as a circuit DAG",
+    max_units: int = 64,
+) -> Path:
+    """The folded network as a layered circuit diagram (sparse-circuits style).
+
+    This is the *intensional* view of the program — the shared computation
+    graph, in contrast to the (exponential) extensional decision tree. One
+    column per surviving-ReLU stage, then the output logits. Stage-0 unit
+    glyphs are their input-space filters when ``image_shape`` is given. Every
+    carried coordinate is resolved back to its ORIGIN (an earlier unit's
+    output, or the raw input), so unit→consumer edges are drawn even when the
+    signal travels through the carry; raw-input contributions are aggregated
+    into one grey "affine bypass" node (edge width ∝ that row block's norm).
+    For each consumer only its ``top_edges`` strongest-|weight| unit inputs
+    are drawn — blue positive, red negative, width ∝ |w|. Refuses networks
+    with more than ``max_units`` surviving units (illegible).
+    """
+    stages = folded.stages
+    widths = [s.out_features for s in stages]
+    total_units = sum(widths)
+    if total_units > max_units:
+        raise ValueError(
+            f"{total_units} surviving units; refusing to render more than "
+            f"{max_units} (raise max_units to override)"
+        )
+    out_dim = folded.head.out_features
+    n_cols = len(stages) + 1
+
+    def _ys(count: int) -> list[float]:
+        if count == 1:
+            return [0.5]
+        return [i / (count - 1) for i in range(count)]
+
+    # Wide stages wrap into sub-columns of <= 32 units so tall networks stay
+    # within a sane figure height.
+    per_sub = 32
+    positions: list[list[tuple[float, float]]] = []
+    max_rows = out_dim
+    for col, width in enumerate(widths):
+        n_sub = max(1, -(-width // per_sub))
+        rows_per = -(-width // n_sub) if width else 1
+        max_rows = max(max_rows, rows_per)
+        ys = _ys(rows_per)
+        pos: list[tuple[float, float]] = []
+        for j in range(width):
+            sub, row = divmod(j, rows_per)
+            pos.append((col + (sub - (n_sub - 1) / 2) * 0.22, ys[row]))
+        positions.append(pos)
+    logit_positions = [(float(len(stages)), y) for y in _ys(out_dim)]
+    bypass_position = (float(len(stages)) - 0.5, -0.18)
+
+    fig, ax = plt.subplots(figsize=(3.2 * n_cols, max(4.0, 0.55 * max_rows)))
+    ax.axis("off")
+    ax.set_xlim(-0.6, len(stages) + 0.6)
+    ax.set_ylim(-0.35, 1.1)
+
+    # Resolve every coordinate of each augmented input u_l to its origin:
+    # ("unit", stage, j) for an earlier ReLU's output, or ("input", i) for a
+    # raw input coordinate carried forward.
+    origins: list[list[tuple]] = [
+        [("input", i) for i in range(stages[0].in_features if stages else 0)]
+    ]
+    for level, (stage, carry) in enumerate(zip(stages, folded.carries, strict=True)):
+        level_origin = [("unit", level, j) for j in range(stage.out_features)]
+        level_origin += [origins[level][int(c)] for c in carry.tolist()]
+        origins.append(level_origin)
+
+    def _draw_edges(
+        weight: Tensor, targets: list[tuple[float, float]], origin: list[tuple]
+    ) -> bool:
+        """Edges into ``targets``; returns whether a bypass edge was drawn."""
+        if weight.numel() == 0:
+            return False
+        unit_cols = [c for c, o in enumerate(origin) if o[0] == "unit"]
+        input_cols = [c for c, o in enumerate(origin) if o[0] == "input"]
+        scale = float(weight.abs().max()) or 1.0
+        used_bypass = False
+        for t, target in enumerate(targets):
+            row = weight[t]
+            unit_weights = row[unit_cols]
+            order = unit_weights.abs().argsort(descending=True)[:top_edges]
+            for k in order.tolist():
+                w = float(unit_weights[k])
+                if w == 0.0:
+                    continue
+                _, stage_idx, j = origin[unit_cols[k]]
+                source = positions[stage_idx][j]
+                ax.plot(
+                    [source[0], target[0]],
+                    [source[1], target[1]],
+                    color="tab:blue" if w > 0 else "tab:red",
+                    lw=0.4 + 2.6 * abs(w) / scale,
+                    alpha=0.65,
+                    zorder=1,
+                )
+            if input_cols:
+                strength = float(row[input_cols].norm())
+                if strength > 0.0:
+                    used_bypass = True
+                    ax.plot(
+                        [bypass_position[0], target[0]],
+                        [bypass_position[1], target[1]],
+                        color="grey",
+                        lw=0.4 + 2.6 * min(1.0, strength / scale),
+                        alpha=0.5,
+                        zorder=1,
+                    )
+        return used_bypass
+
+    used_bypass = False
+    for col in range(1, len(stages)):
+        used_bypass |= _draw_edges(
+            stages[col].weight.detach(), positions[col], origins[col]
+        )
+    if stages:
+        used_bypass |= _draw_edges(
+            folded.head.weight.detach(), logit_positions, origins[len(stages)]
+        )
+
+    # Nodes: stage units (image glyphs at stage 0 when possible), logits, bypass.
+    for col, stage in enumerate(stages):
+        weight = stage.weight.detach().cpu()
+        for j in range(stage.out_features):
+            x, y = positions[col][j]
+            if col == 0 and image_shape is not None:
+                img = weight[j].reshape(image_shape)
+                if len(image_shape) == 3 and image_shape[0] == 3:
+                    # RGB filters: per-filter min-max, channels last.
+                    lo_v, hi_v = float(img.min()), float(img.max())
+                    span = (hi_v - lo_v) or 1.0
+                    rgba = ((img - lo_v) / span).permute(1, 2, 0).numpy()
+                else:
+                    bound = float(img.abs().max()) or 1.0
+                    # Symmetric diverging colors, materialized as RGBA.
+                    rgba = plt.get_cmap("RdBu_r")((img / bound + 1.0) / 2.0)
+                box = OffsetImage(rgba, zoom=28.0 / max(image_shape))
+                ax.add_artist(AnnotationBbox(box, (x, y), frameon=True, zorder=2))
+            else:
+                ax.scatter([x], [y], s=180, color="lightyellow", ec="grey", zorder=2)
+                ax.text(x, y, f"{col}.{j}", ha="center", va="center", fontsize=6)
+    labels = (
+        list(class_names)
+        if class_names is not None
+        else [str(c) for c in range(out_dim)]
+    )
+    for (x, y), label in zip(logit_positions, labels, strict=True):
+        ax.text(
+            x,
+            y,
+            label,
+            ha="center",
+            va="center",
+            fontsize=8,
+            zorder=2,
+            bbox={"boxstyle": "round", "fc": "lightblue", "ec": "grey"},
+        )
+    if used_bypass:
+        ax.text(
+            bypass_position[0],
+            bypass_position[1],
+            "affine bypass\n(carried input)",
+            ha="center",
+            va="center",
+            fontsize=7,
+            zorder=2,
+            bbox={"boxstyle": "round", "fc": "lightgrey", "ec": "grey"},
+        )
+    ax.set_title(
+        f"{title} — top {top_edges} unit edges per consumer "
+        "(blue +, red -, width ~ |w|)"
+    )
     try:
         fig.savefig(path, dpi=110, bbox_inches="tight")
     finally:
