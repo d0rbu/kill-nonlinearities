@@ -16,6 +16,7 @@ dependencies = [
     "imageio>=2.37.3",
     "matplotlib>=3.10.9",
     "pillow>=12.2.0",
+    "scipy>=1.17.1",
     "torch>=2.12",
     "torchvision>=0.27.0",
     "wandb>=0.27.2",
