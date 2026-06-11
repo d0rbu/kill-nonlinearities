@@ -254,8 +254,11 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   [architecture](../architecture/overview.md)).
 - [ ] **Phase 1b — small transformer (language modeling).** Apply the same regularizer to the
   MLP/FFN blocks of a small transformer.
-- [ ] **Phase 2 — structural surgery.** Fold linearized layers and prune dead units; measure
-  retained accuracy. (Phase 1a already does the *masked* form.)
+- [~] **Phase 2 — structural surgery.** Fold linearized layers and prune dead units; measure
+  retained accuracy. (Phase 1a already does the *masked* form.) *MLP folding is
+  implemented* (`surgery/fold.py`: `ZERO` pruned, `IDENTITY` composed into the next
+  layer's weights, unread units trimmed); CNN folding (per-position identities make conv
+  layers locally-connected) is still open.
 - [ ] **Phase 3 — visualize the de-nonlinearized network.** Build tools to visualize the
   surgered/folded networks — which nonlinearities survive, what the folded linear maps
   compute — and study whether the sparser, folded-layer mechanisms are interpretable
@@ -275,6 +278,56 @@ Tracked work, roughly in order. (File these as GitHub issues — see
 
 > Newest entries on top. Each entry: date, what was tried, config (λ, τ schedule, model,
 > data), result, and takeaway. Keep findings here so knowledge accumulates in one place.
+
+### 2026-06-11 — Phase 2: structural folding — the MNIST λ=10 network folds to a bare affine map
+
+- **Setup:** `surgery/fold.py` (new) folds a mode-assigned `ReLUMLP` into a
+  structurally smaller `FoldedMLP`: `ZERO` neurons are deleted (rows + consumer
+  columns), `IDENTITY` neurons are **composed into the next layer's weights** at
+  fold time (an affine bypass over the carried input), `RELU` neurons survive as
+  the only real nonlinearities, and a backward trim removes every coordinate no
+  consumer reads — so a fully-`IDENTITY` network collapses to a single affine map
+  and a dead-only assignment reduces to plain width pruning. Evaluated over the
+  **final checkpoints of all 22 trained MLP runs** (MNIST + CIFAR 10-λ sweeps +
+  the 2 wide-CIFAR runs) at two conversion thresholds: *exact* (q ∈ {0,1}) and
+  *lowH* (H(q) ≤ 0.05 nats, tie q>0.5 → IDENTITY). Script:
+  [`scripts/fold_eval.py`](../../scripts/fold_eval.py); data:
+  `assets/fold_eval_results.json`.
+- **Correctness (the point of phase 2):** across all **44 folds**, folded-vs-masked
+  prediction agreement on the full test set is **1.0000** and max |Δlogits| ≤
+  1.2e-4 (float-reassociation level; pure-pruning folds are mostly bit-exact at
+  0.0). Property tests additionally verify fold+trim against masked models to
+  1e-10 in float64 under random mode assignments.
+- **Result highlights** (test acc / remaining ReLUs / params, lowH threshold):
+
+  | run | acc (masked = folded) | ReLUs left | params | compression |
+  | --- | --- | --- | --- | --- |
+  | MNIST λ=0 | 0.9768 | 244×240 | 269,322 → 252,750 | 1.07× |
+  | MNIST λ=0.5 | 0.9682 | **49×6** | 269,322 → 51,869 | **5.2×** |
+  | MNIST λ=1 | 0.9542 | 18×0 | 269,322 → 22,160 | 12.2× |
+  | MNIST λ=10 | 0.9081 | **0×0** | 269,322 → **7,850** | **34.3×** |
+  | CIFAR λ=1 | 0.5199 | 256×47 | 855,050 → 801,807 | 1.07× |
+  | CIFAR λ=10 | 0.4878 | 98×0 | 855,050 → 332,864 | 2.6× |
+
+  ![fold evaluation](assets/fold_eval.png)
+
+  The MNIST λ=10 network folds to **exactly 784×10+10 = 7,850 parameters — a bare
+  affine map** (every hidden unit eliminated; carry trimmed to the raw input) at
+  0.9081, the logistic-regression-class accuracy its λ→∞ asymptote predicted.
+  λ=0.5 is the sweet spot: −1pp accuracy for 5.2× fewer parameters and only 55
+  nonlinear units. On CIFAR, layer 1 keeps all 256 units until λ≥2 (consistent
+  with the per-layer analysis) and the floor is ~100 ReLUs at λ=10.
+- **An honest caveat:** at the *exact* threshold on mid-λ runs, folding can
+  **increase** the parameter count (e.g. MNIST λ=0.2: 269k → 344k) — every
+  `IDENTITY` unit's affine map is dense over the carried input, so the bypass
+  only pays for itself once the surviving nonlinear core is small. Dead-only
+  pruning always shrinks. Param-count is the wrong objective at small
+  conversion counts; nonlinearity-count is the meaningful one.
+- **Takeaway:** phase 2's masked→structural step is **lossless in practice and
+  verified at scale**. The regularizer's λ knob now has a concrete architectural
+  meaning: it buys *foldability* — MNIST validates the full pipeline
+  (regularize → classify → fold → a 34× smaller, nearly-linear artifact). CNN
+  folding (per-position identities → locally-connected layers) remains open.
 
 ### 2026-06-10 — per-position vs channel-pooled regularizer: aggregates congruent, fine structure differs exactly as predicted
 
