@@ -81,3 +81,34 @@ def test_plot_input_filters_rejects_empty_weight(tmp_path: Path) -> None:
         network.plot_input_filters(
             torch.zeros(0, 9), image_shape=(3, 3), path=tmp_path / "none.png"
         )
+
+
+def test_plot_class_q_matrix_writes_nonempty_file(tmp_path: Path) -> None:
+    torch.manual_seed(2)
+    q = torch.rand(10, 24)
+    out = network.plot_class_q_matrix(q, tmp_path / "class_q.png")
+    assert out.stat().st_size > 0
+
+
+def test_plot_class_q_matrix_accepts_class_names(tmp_path: Path) -> None:
+    q = torch.rand(3, 5)
+    out = network.plot_class_q_matrix(
+        q, tmp_path / "named.png", class_names=("cat", "dog", "frog")
+    )
+    assert out.stat().st_size > 0
+
+
+def test_plot_class_q_matrix_rejects_non_2d_input(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="classes, neurons"):
+        network.plot_class_q_matrix(torch.rand(8), tmp_path / "bad.png")
+
+
+def test_plot_spatial_q_map_panel_labels_override_titles(tmp_path: Path) -> None:
+    q = torch.rand(3, 4, 4)
+    out = network.plot_spatial_q_map(
+        q,
+        side=4,
+        path=tmp_path / "labeled.png",
+        panel_labels=("plane", "car", "bird"),
+    )
+    assert out.stat().st_size > 0

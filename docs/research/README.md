@@ -326,6 +326,28 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   the surviving nonlinearity is a small, visually coherent feature set. The
   full gallery (15 figures incl. compositions and all three conv sites at three
   λ) is under `assets/denonlin/`.
+- **Addendum (class-indexed views).** Two clarifications and a new tool. First:
+  the CNN q-maps above come from the **per-position** regularizer arm — the
+  channel-uniform look at high λ is an *emergent outcome* (weight-tied filters
+  on shared image statistics; the granularity-comparison entry quantifies the
+  naturally tiny within-channel dispersion), not channel-pooled training.
+  Second: new class-conditional statistics (`analysis.statistics.
+  class_conditional_q`, `viz.network.plot_class_q_matrix`, and per-class
+  spatial maps) index everything by input class:
+  - **MNIST λ=1's 18 surviving ReLUs are class-group splitters.** Their
+    per-class firing matrix is close to binary: each unit fires near-always
+    for a subset of digit classes and near-never for the rest (e.g. one unit
+    fires for {1, 4, 7, 9} — the thin/straight-stroke digits). The surviving
+    nonlinearity literally computes class-cluster separations.
+  - **A "switching" conv channel switches by scene layout, not at random.**
+    conv0 ch14 (uniform q ≈ 0.5 in aggregate at λ=10) decomposes per class into
+    smooth spatial gradients: bright sky-tops for plane/ship, dark under-body
+    bands for car/truck — its residual nonlinearity encodes coarse
+    class-dependent scene structure.
+
+  | Per-class firing of the 18 survivors (MNIST λ=1) | conv0 ch14 per-class q (CIFAR λ=10) |
+  | --- | --- |
+  | ![survivor class firing](assets/denonlin/mnist_class_q_survivors_lam1.png) | ![ch14 class qmaps](assets/denonlin/cnn_class_qmap_conv0_ch14_lam10.png) |
 
 ### 2026-06-11 — Phase 2: structural folding — the MNIST λ=10 network folds to a bare affine map
 

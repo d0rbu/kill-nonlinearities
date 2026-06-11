@@ -27,6 +27,7 @@ from torch import Tensor
 from kill_nonlinearities.analysis.statistics import NeuronStats
 
 __all__ = [
+    "plot_class_q_matrix",
     "plot_input_filters",
     "plot_mode_composition",
     "plot_spatial_q_map",
@@ -98,13 +99,16 @@ def plot_spatial_q_map(
     path: Path,
     max_channels: int = 16,
     title: str = "Per-position hard q",
+    panel_labels: Sequence[str] | None = None,
 ) -> Path:
     """Heatmap grid of a conv site's per-position q, one panel per channel.
 
     ``q`` is the site's per-position hard fraction-positive, either flat
     ``[C*side*side]`` in the emission convention ``i = (c*side + h)*side + w``
     or already shaped ``[C, side, side]``. The first ``max_channels`` channels
-    are rendered with a shared 0..1 color scale.
+    are rendered with a shared 0..1 color scale. ``panel_labels`` overrides the
+    default ``ch {i}`` panel titles (e.g. class names for class-conditional
+    maps of one channel).
     """
     grid = q.detach().reshape(-1, side, side)
     channels = min(int(grid.shape[0]), max_channels)
@@ -122,10 +126,48 @@ def plot_spatial_q_map(
             ax.axis("off")
             continue
         image = ax.imshow(grid[idx].cpu(), vmin=0.0, vmax=1.0, cmap="viridis")
-        ax.set_title(f"ch {idx}", fontsize=8)
+        label = panel_labels[idx] if panel_labels is not None else f"ch {idx}"
+        ax.set_title(label, fontsize=8)
     fig.suptitle(f"{title} (0 = always-negative, 1 = always-positive)")
     if image is not None:
         fig.colorbar(image, ax=axes, shrink=0.8, label="hard q")
+    try:
+        fig.savefig(path, dpi=110, bbox_inches="tight")
+    finally:
+        plt.close(fig)
+    return path
+
+
+def plot_class_q_matrix(
+    q: Tensor,
+    path: Path,
+    title: str = "Class-conditional firing rates",
+    class_names: Sequence[str] | None = None,
+) -> Path:
+    """Heatmap of per-class hard q: rows are classes, columns are neurons.
+
+    ``q`` is ``[num_classes, N]`` (e.g. from ``analysis.statistics.
+    class_conditional_q``); a shared 0..1 scale makes class-selective units
+    visible as vertical contrast.
+    """
+    if q.ndim != 2:
+        raise ValueError(f"q must be [classes, neurons], got shape {tuple(q.shape)}")
+    classes = int(q.shape[0])
+    fig, ax = plt.subplots(figsize=(min(12.0, 2.0 + 0.25 * int(q.shape[1])), 3.5))
+    image = ax.imshow(
+        q.detach().cpu(), vmin=0.0, vmax=1.0, cmap="viridis", aspect="auto"
+    )
+    labels = (
+        list(class_names)
+        if class_names is not None
+        else [str(c) for c in range(classes)]
+    )
+    ax.set_yticks(range(classes), labels)
+    ax.set_xlabel("neuron")
+    ax.set_ylabel("class")
+    ax.set_title(title)
+    fig.colorbar(image, ax=ax, shrink=0.9, label="hard q | class")
+    fig.tight_layout()
     try:
         fig.savefig(path, dpi=110, bbox_inches="tight")
     finally:
