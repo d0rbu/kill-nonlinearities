@@ -299,9 +299,13 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   out. Property-tested: trees equal the network to 1e-9 on sampled in-box
   inputs under random mode assignments; fully-stable networks collapse to a
   single leaf; routing matches the hyperplane tests; budgets are explicit.
-- **Result 1 — the toy network IS a 19-line program.** A 2→8→2 MLP trained on
-  a ring-vs-blob task ([`scripts/decompile_report.py`](../../scripts/decompile_report.py))
-  decompiles **exactly** (max |Δ| ≈ 5e-15) into nested conditionals; with the
+- **Result 1 — the toy network IS a 19-line program.** The toy is a synthetic
+  2-D dataset — 4,096 points uniform in the box [-2, 2]², labeled by whether
+  they lie inside the unit circle — and a 2→8→2 MLP trained on it
+  ([`scripts/decompile_report.py`](../../scripts/decompile_report.py)); two
+  input dimensions were chosen so the *entire* decompiled program can be
+  printed and its decision regions plotted. It decompiles **exactly**
+  (max |Δ| ≈ 5e-15) into nested conditionals; with the
   regularizer (λ=0.3) the program shrinks **26 → 19 leaves and depth 7 → 5 at
   equal accuracy** (0.992 vs 0.990). The full programs are committed
   (`assets/decompile_toy_lam*.txt`); the regularized one begins:
