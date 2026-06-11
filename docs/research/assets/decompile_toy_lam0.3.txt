@@ -1,0 +1,55 @@
+if +1.813*x[0] +0.823*x[1] -0.793 > 0:  # relu0[0] fires
+    if -2.160*x[1] -0.046*x[0] -0.160 > 0:  # relu0[1] fires
+        if +2.990*x[1] +2.084*x[0] -1.305 > 0:  # relu0[3] fires
+            return affine(2x2) @ x + bias
+        else:
+            if +2.719*x[0] -1.784*x[1] -1.445 > 0:  # relu0[4] fires
+                return affine(2x2) @ x + bias
+            else:
+                return affine(2x2) @ x + bias
+    else:
+        if -1.983*x[0] +1.659*x[1] -0.952 > 0:  # relu0[2] fires
+            return affine(2x2) @ x + bias
+        else:
+            if +2.990*x[1] +2.084*x[0] -1.305 > 0:  # relu0[3] fires
+                if +2.719*x[0] -1.784*x[1] -1.445 > 0:  # relu0[4] fires
+                    return affine(2x2) @ x + bias
+                else:
+                    return affine(2x2) @ x + bias
+            else:
+                if +2.719*x[0] -1.784*x[1] -1.445 > 0:  # relu0[4] fires
+                    return affine(2x2) @ x + bias
+                else:
+                    return affine(2x2) @ x + bias
+else:
+    if -2.160*x[1] -0.046*x[0] -0.160 > 0:  # relu0[1] fires
+        if -1.983*x[0] +1.659*x[1] -0.952 > 0:  # relu0[2] fires
+            if -2.280*x[0] -2.121*x[1] -1.600 > 0:  # relu0[6] fires
+                return affine(2x2) @ x + bias
+            else:
+                return affine(2x2) @ x + bias
+        else:
+            if +2.719*x[0] -1.784*x[1] -1.445 > 0:  # relu0[4] fires
+                if -2.280*x[0] -2.121*x[1] -1.600 > 0:  # relu0[6] fires
+                    return affine(2x2) @ x + bias
+                else:
+                    return affine(2x2) @ x + bias
+            else:
+                if -2.280*x[0] -2.121*x[1] -1.600 > 0:  # relu0[6] fires
+                    return affine(2x2) @ x + bias
+                else:
+                    return affine(2x2) @ x + bias
+    else:
+        if -1.983*x[0] +1.659*x[1] -0.952 > 0:  # relu0[2] fires
+            if +2.990*x[1] +2.084*x[0] -1.305 > 0:  # relu0[3] fires
+                return affine(2x2) @ x + bias
+            else:
+                if -2.280*x[0] -2.121*x[1] -1.600 > 0:  # relu0[6] fires
+                    return affine(2x2) @ x + bias
+                else:
+                    return affine(2x2) @ x + bias
+        else:
+            if +2.990*x[1] +2.084*x[0] -1.305 > 0:  # relu0[3] fires
+                return affine(2x2) @ x + bias
+            else:
+                return affine(2x2) @ x + bias

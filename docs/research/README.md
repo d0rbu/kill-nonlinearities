@@ -273,15 +273,73 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   data sample — a stronger guarantee than the empirical $q_i$.) *Implemented* for MLPs
   (`analysis/ranges.py`: mode-aware IBP + per-neuron HiGHS LPs with the triangle
   relaxation; `certified_modes` feeds surgery directly).
-- [ ] **Phase 5 — decompile to conditionals.** Use the range analysis to translate the
+- [~] **Phase 5 — decompile to conditionals.** Use the range analysis to translate the
   weights + surviving nonlinearities into explicit conditionals (decision-tree-like
   structure): a ReLU whose range crosses zero is a branch; everything between branches
-  is an affine map.
+  is an affine map. *Implemented* for MLPs (`analysis/decompile.py`: exact
+  piecewise-affine trees with input-space hyperplane tests, region LPs, leaf budgets,
+  and a pseudo-code renderer); first findings in the log.
 
 ## Experiment log
 
 > Newest entries on top. Each entry: date, what was tried, config (λ, τ schedule, model,
 > data), result, and takeaway. Keep findings here so knowledge accumulates in one place.
+
+### 2026-06-11 — Phase 5: decompiling networks into nested conditionals
+
+- **Setup:** `analysis/decompile.py` (new): **exact piecewise-affine
+  decompilation** of a (mode-aware) `ReLUMLP` over an input box. Within a
+  region where every earlier ReLU's sign is fixed, each pre-activation is
+  affine in the input — so an undetermined unit becomes a **branch on an
+  input-space hyperplane** and leaves are affine maps: the network's exact
+  semantics as a program. Per region each unit's sign is decided by a free
+  closed-form box range, then an exact region LP (HiGHS) only if needed;
+  `max_leaves` bounds the enumeration with explicit `Truncated` nodes (never
+  silently dropped); `evaluate_tree` / `tree_stats` / `render_tree` round it
+  out. Property-tested: trees equal the network to 1e-9 on sampled in-box
+  inputs under random mode assignments; fully-stable networks collapse to a
+  single leaf; routing matches the hyperplane tests; budgets are explicit.
+- **Result 1 — the toy network IS a 19-line program.** A 2→8→2 MLP trained on
+  a ring-vs-blob task ([`scripts/decompile_report.py`](../../scripts/decompile_report.py))
+  decompiles **exactly** (max |Δ| ≈ 5e-15) into nested conditionals; with the
+  regularizer (λ=0.3) the program shrinks **26 → 19 leaves and depth 7 → 5 at
+  equal accuracy** (0.992 vs 0.990). The full programs are committed
+  (`assets/decompile_toy_lam*.txt`); the regularized one begins:
+
+  ```text
+  if +1.813*x[0] +0.823*x[1] -0.793 > 0:      # relu0[0] fires
+      if -2.160*x[1] -0.046*x[0] -0.160 > 0:  # relu0[1] fires
+          if +2.990*x[1] +2.084*x[0] -1.305 > 0:  # relu0[3] fires
+              return affine(2x2) @ x + bias
+          else: ...
+  ```
+
+  | λ=0: 26 leaves | λ=0.3: 19 leaves |
+  | --- | --- |
+  | ![toy lam0](assets/decompile_toy_lam0.png) | ![toy lam0.3](assets/decompile_toy_lam0.3.png) |
+- **Result 2 — MNIST programs shrink with λ but stay budget-bound at box
+  scale.** Decompiling the trained checkpoints over the s=0.25 centered
+  sub-box (256-leaf budget):
+
+  | λ | branches | leaves | truncated | depth | wall time |
+  | --- | --- | --- | --- | --- | --- |
+  | 0 | 322 | 256 | 67 | **74** | 344 s |
+  | 1 | 282 | 256 | 27 | 38 | 594 s |
+  | 10 | 282 | 255 | 28 | **33** | 303 s |
+
+  Regularization **halves the program depth** (74 → 33) and cuts unresolved
+  regions 2.4×, but every run exhausts the budget — at this box size even the
+  λ=10 network keeps hundreds of in-box-unstable units, exactly matching
+  phase 4's certification collapse at s=0.25. (An exploratory λ=0 run at
+  s=0.5: 228/256 regions truncated at depth 237 after 43 min — dropped from
+  the committed sweep for cost.)
+- **Takeaway:** decompilation is implemented, exact, and consistent with the
+  range analysis: **the network's simplicity lives near the data**. On regions
+  the data actually occupies (toy box; small sub-boxes where phase 4 certifies
+  hundreds of units) the regularizer visibly shrinks the program; global
+  hull-scale decompilation of MNIST-sized nets instead wants the *local* form
+  — decompile around a sample — or certified training. Both are natural next
+  steps, as is folding `Truncated` regions back onto sub-networks.
 
 ### 2026-06-11 — Phase 4: LP range analysis — empirical consistency is not box-certified consistency
 

@@ -136,7 +136,8 @@ src/kill_nonlinearities/
 ├── analysis/            # hard sign statistics + neuron ranking/selection + ranges
 │   ├── statistics.py    #   collect_pre_activations; neuron_stats; collect_history
 │   ├── selection.py     #   rank_by_entropy/rank_random; make_k_grid; select_topk; assign_modes
-│   └── ranges.py        #   phase-4: IBP + LP pre-activation bounds over an input box; certified_modes
+│   ├── ranges.py        #   phase-4: IBP + LP pre-activation bounds over an input box; certified_modes
+│   └── decompile.py     #   phase-5: exact piecewise-affine decision trees (decompile_mlp/render_tree)
 ├── surgery/             # masked-activation surgery + structural folding (phase 2)
 │   ├── apply.py         #   apply_modes; evaluate_accuracy; k_sweep
 │   └── fold.py          #   fold_mlp/trim_folded → FoldedMLP (ZERO pruned, IDENTITY composed)
