@@ -193,12 +193,33 @@ def _chord(poly: list[Point], w: list[float], b: float) -> list[Point]:
 
 
 def _draw_boundaries(ax, node, poly: list[Point]) -> None:
-    """Draw EVERY branch hyperplane clipped to its own region (recursively).
+    """Draw region borders AND the class decision boundary (recursively).
 
-    This renders all region borders — including ones separating two regions
-    whose leaves predict the same class.
+    Thin black: every branch hyperplane (ReLU kink) clipped to its own region
+    — including borders separating two same-class regions. Thick crimson: the
+    *argmax* boundary, which lives INSIDE affine cells (within one leaf both
+    logits are linear, and the class flips where they cross — no ReLU kink
+    there), drawn as each leaf's logit-crossing segment clipped to its cell.
     """
-    if not isinstance(node, Branch) or len(poly) < 3:
+    if len(poly) < 3:
+        return
+    if isinstance(node, Leaf):
+        if int(node.weight.shape[0]) == 2:
+            w_dec = [
+                float(node.weight[1, 0] - node.weight[0, 0]),
+                float(node.weight[1, 1] - node.weight[0, 1]),
+            ]
+            b_dec = float(node.bias[1] - node.bias[0])
+            segment = _chord(poly, w_dec, b_dec)
+            if len(segment) == 2:
+                ax.plot(
+                    [segment[0][0], segment[1][0]],
+                    [segment[0][1], segment[1][1]],
+                    color="crimson",
+                    lw=1.8,
+                )
+        return
+    if not isinstance(node, Branch):
         return
     w = [float(node.weight[0]), float(node.weight[1])]
     segment = _chord(poly, w, node.bias)
@@ -231,7 +252,7 @@ def _plot_toy_regions(model: ReLUMLP, tree, lam: float, leaves: int) -> None:
     circle = plt.Circle((0, 0), 1.0, fill=False, color="black", linestyle=":")
     ax.add_patch(circle)
     ax.set_title(
-        f"toy λ={lam:g}: decompiled program ({leaves} leaves; all region borders)"
+        f"toy λ={lam:g}: {leaves} leaves — black: ReLU kinks, crimson: class boundary"
     )
     fig.tight_layout()
     try:

@@ -332,14 +332,38 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   Decompiling the CNN globally needs the census driven down first: much
   stronger/targeted consistency pressure, coarser branch predicates (e.g.
   channel-level tests), or per-sample local programs.
+- **Result 3 — the class boundary is not the region borders.** Review caught
+  that the toy overlay drew only the ReLU kinks (black) while the red/blue
+  class edge mostly didn't lie on them. That is correct behavior made
+  confusing: within one affine cell both logits are linear, so the **argmax
+  boundary cuts through cell interiors** where the logits cross — no ReLU
+  involved. The overlay now also draws each leaf's logit-crossing segment
+  (crimson): the class boundary appears as a polygon of leaf-internal
+  segments hugging the true circle, visibly distinct from the black kinks.
+
+  | λ=0.3: kinks (black) + class boundary (crimson) | λ=0.3 tree diagram |
+  | --- | --- |
+  | ![toy boundaries](assets/decompile_toy_lam0.3.png) | ![toy tree](assets/decompile_toy_tree_lam0.3.png) |
+- **Result 4 — the intensional view: the folded network as a circuit DAG.**
+  The decision tree is the *extensional* program (it enumerates cases — and
+  the census shows that explodes at λ=0). `viz.network.plot_folded_dag` renders
+  the *intensional* program instead, sparse-circuits style: one column per
+  surviving-ReLU stage (stage-0 glyphs are the units' input-space filters),
+  output logits on the right, edges = the strongest signed weights per
+  consumer, and every carried coordinate **resolved to its origin** (an
+  earlier unit or the raw input — raw-input flow aggregates into one grey
+  "affine bypass" node). MNIST λ=1's whole program is then one readable
+  picture: 18 stroke-detector glyphs voting into 10 logits over a shared
+  affine bypass (`assets/denonlin/mnist_dag_lam1.png`, also λ=0.5 with 55
+  units).
 - **Takeaway:** building the trees from the data (rather than the input box)
   is the right default — the box/LP machinery remains the *certification*
   layer (a natural hybrid: LP-certify a data-built tree's regions), while the
   data oracle gives compact, faithful programs where consistency is high. The
   census (`distinct regions ÷ samples`) is the cleanest single number for
   "how decompilable is this network", and λ moves it by orders of magnitude on
-  the MLP. The toy now ships with full region-border overlays and tree
-  diagrams (`assets/decompile_toy_*`).
+  the MLP. For program-as-artifact viewing, prefer the **DAG (intensional)**
+  for anything wide and the tree (extensional) only when the census is small.
 
 ### 2026-06-11 — Phase 5: decompiling networks into nested conditionals
 

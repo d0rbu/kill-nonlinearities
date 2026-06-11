@@ -39,6 +39,7 @@ from kill_nonlinearities.surgery.fold import fold_mlp, folded_stats, trim_folded
 from kill_nonlinearities.training.checkpoint import load_checkpoint
 from kill_nonlinearities.viz.network import (
     plot_class_q_matrix,
+    plot_folded_dag,
     plot_input_filters,
     plot_mode_composition,
     plot_spatial_q_map,
@@ -125,6 +126,17 @@ def mnist_gallery() -> None:
                 OUT_DIR / f"mnist_affine_templates_lam{lam:g}.png",
                 title=f"MNIST λ={lam:g}: the folded network IS this affine map "
                 "(per-class templates)",
+            )
+        elif sum(fstats.nonlinear_widths) <= 64:
+            # The intensional program view: the folded network as a circuit DAG.
+            plot_folded_dag(
+                folded,
+                OUT_DIR / f"mnist_dag_lam{lam:g}.png",
+                image_shape=(28, 28),
+                title=(
+                    f"MNIST λ={lam:g}: the folded network as a circuit "
+                    f"({sum(fstats.nonlinear_widths)} surviving ReLUs)"
+                ),
             )
 
         # Class-indexed firing: which classes does each unit fire for?

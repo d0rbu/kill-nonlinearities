@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from kill_nonlinearities.analysis.statistics import NeuronStats
+from kill_nonlinearities.surgery.fold import FoldedMLP, fold_mlp, trim_folded
 from kill_nonlinearities.viz import network
 
 
@@ -151,3 +152,32 @@ def test_plot_decision_tree_accepts_leaf_labeler_and_single_leaf(
 def test_plot_decision_tree_refuses_huge_trees(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="terminal nodes"):
         network.plot_decision_tree(_toy_tree(), tmp_path / "huge.png", max_terminals=1)
+
+
+def _folded(hidden: tuple[int, ...] = (5, 3)) -> FoldedMLP:
+    from kill_nonlinearities.config import ModelConfig
+    from kill_nonlinearities.models.mlp import ReLUMLP
+
+    torch.manual_seed(4)
+    model = ReLUMLP(ModelConfig(input_dim=9, hidden_dims=hidden, output_dim=3))
+    return trim_folded(fold_mlp(model))
+
+
+def test_plot_folded_dag_writes_nonempty_file(tmp_path: Path) -> None:
+    out = network.plot_folded_dag(_folded(), tmp_path / "dag.png")
+    assert out.stat().st_size > 0
+
+
+def test_plot_folded_dag_with_image_glyphs_and_class_names(tmp_path: Path) -> None:
+    out = network.plot_folded_dag(
+        _folded(),
+        tmp_path / "dag_glyphs.png",
+        image_shape=(3, 3),
+        class_names=("a", "b", "c"),
+    )
+    assert out.stat().st_size > 0
+
+
+def test_plot_folded_dag_refuses_wide_networks(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="surviving units"):
+        network.plot_folded_dag(_folded(), tmp_path / "wide.png", max_units=2)

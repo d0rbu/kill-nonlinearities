@@ -22,14 +22,17 @@ import matplotlib
 matplotlib.use("Agg")  # must precede the pyplot import below
 
 import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from torch import Tensor
 
 from kill_nonlinearities.analysis.decompile import Branch, Leaf, Node, tree_stats
 from kill_nonlinearities.analysis.statistics import NeuronStats
+from kill_nonlinearities.surgery.fold import FoldedMLP
 
 __all__ = [
     "plot_class_q_matrix",
     "plot_decision_tree",
+    "plot_folded_dag",
     "plot_input_filters",
     "plot_mode_composition",
     "plot_spatial_q_map",
@@ -221,6 +224,174 @@ def plot_decision_tree(
 
     _draw(node)
     ax.set_title(title)
+    try:
+        fig.savefig(path, dpi=110, bbox_inches="tight")
+    finally:
+        plt.close(fig)
+    return path
+
+
+def plot_folded_dag(
+    folded: FoldedMLP,
+    path: Path,
+    image_shape: tuple[int, ...] | None = None,
+    class_names: Sequence[str] | None = None,
+    top_edges: int = 4,
+    title: str = "Folded network as a circuit DAG",
+    max_units: int = 64,
+) -> Path:
+    """The folded network as a layered circuit diagram (sparse-circuits style).
+
+    This is the *intensional* view of the program — the shared computation
+    graph, in contrast to the (exponential) extensional decision tree. One
+    column per surviving-ReLU stage, then the output logits. Stage-0 unit
+    glyphs are their input-space filters when ``image_shape`` is given. Every
+    carried coordinate is resolved back to its ORIGIN (an earlier unit's
+    output, or the raw input), so unit→consumer edges are drawn even when the
+    signal travels through the carry; raw-input contributions are aggregated
+    into one grey "affine bypass" node (edge width ∝ that row block's norm).
+    For each consumer only its ``top_edges`` strongest-|weight| unit inputs
+    are drawn — blue positive, red negative, width ∝ |w|. Refuses networks
+    with more than ``max_units`` surviving units (illegible).
+    """
+    stages = folded.stages
+    widths = [s.out_features for s in stages]
+    total_units = sum(widths)
+    if total_units > max_units:
+        raise ValueError(
+            f"{total_units} surviving units; refusing to render more than "
+            f"{max_units} (raise max_units to override)"
+        )
+    out_dim = folded.head.out_features
+    n_cols = len(stages) + 1
+
+    def _ys(count: int) -> list[float]:
+        if count == 1:
+            return [0.5]
+        return [i / (count - 1) for i in range(count)]
+
+    positions: list[list[tuple[float, float]]] = []
+    for col, width in enumerate(widths):
+        positions.append([(float(col), y) for y in _ys(max(width, 1))][:width])
+    logit_positions = [(float(len(stages)), y) for y in _ys(out_dim)]
+    bypass_position = (float(len(stages)) - 0.5, -0.18)
+
+    fig, ax = plt.subplots(
+        figsize=(3.2 * n_cols, max(4.0, 0.55 * max([*widths, out_dim])))
+    )
+    ax.axis("off")
+    ax.set_xlim(-0.6, len(stages) + 0.6)
+    ax.set_ylim(-0.35, 1.1)
+
+    # Resolve every coordinate of each augmented input u_l to its origin:
+    # ("unit", stage, j) for an earlier ReLU's output, or ("input", i) for a
+    # raw input coordinate carried forward.
+    origins: list[list[tuple]] = [
+        [("input", i) for i in range(stages[0].in_features if stages else 0)]
+    ]
+    for level, (stage, carry) in enumerate(zip(stages, folded.carries, strict=True)):
+        level_origin = [("unit", level, j) for j in range(stage.out_features)]
+        level_origin += [origins[level][int(c)] for c in carry.tolist()]
+        origins.append(level_origin)
+
+    def _draw_edges(
+        weight: Tensor, targets: list[tuple[float, float]], origin: list[tuple]
+    ) -> bool:
+        """Edges into ``targets``; returns whether a bypass edge was drawn."""
+        if weight.numel() == 0:
+            return False
+        unit_cols = [c for c, o in enumerate(origin) if o[0] == "unit"]
+        input_cols = [c for c, o in enumerate(origin) if o[0] == "input"]
+        scale = float(weight.abs().max()) or 1.0
+        used_bypass = False
+        for t, target in enumerate(targets):
+            row = weight[t]
+            unit_weights = row[unit_cols]
+            order = unit_weights.abs().argsort(descending=True)[:top_edges]
+            for k in order.tolist():
+                w = float(unit_weights[k])
+                if w == 0.0:
+                    continue
+                _, stage_idx, j = origin[unit_cols[k]]
+                source = positions[stage_idx][j]
+                ax.plot(
+                    [source[0], target[0]],
+                    [source[1], target[1]],
+                    color="tab:blue" if w > 0 else "tab:red",
+                    lw=0.4 + 2.6 * abs(w) / scale,
+                    alpha=0.65,
+                    zorder=1,
+                )
+            if input_cols:
+                strength = float(row[input_cols].norm())
+                if strength > 0.0:
+                    used_bypass = True
+                    ax.plot(
+                        [bypass_position[0], target[0]],
+                        [bypass_position[1], target[1]],
+                        color="grey",
+                        lw=0.4 + 2.6 * min(1.0, strength / scale),
+                        alpha=0.5,
+                        zorder=1,
+                    )
+        return used_bypass
+
+    used_bypass = False
+    for col in range(1, len(stages)):
+        used_bypass |= _draw_edges(
+            stages[col].weight.detach(), positions[col], origins[col]
+        )
+    if stages:
+        used_bypass |= _draw_edges(
+            folded.head.weight.detach(), logit_positions, origins[len(stages)]
+        )
+
+    # Nodes: stage units (image glyphs at stage 0 when possible), logits, bypass.
+    for col, stage in enumerate(stages):
+        weight = stage.weight.detach().cpu()
+        for j in range(stage.out_features):
+            x, y = positions[col][j]
+            if col == 0 and image_shape is not None:
+                img = weight[j].reshape(image_shape)
+                bound = float(img.abs().max()) or 1.0
+                # Symmetric diverging colors, materialized as RGBA up front.
+                rgba = plt.get_cmap("RdBu_r")((img / bound + 1.0) / 2.0)
+                box = OffsetImage(rgba, zoom=28.0 / max(image_shape))
+                ax.add_artist(AnnotationBbox(box, (x, y), frameon=True, zorder=2))
+            else:
+                ax.scatter([x], [y], s=180, color="lightyellow", ec="grey", zorder=2)
+                ax.text(x, y, f"{col}.{j}", ha="center", va="center", fontsize=6)
+    labels = (
+        list(class_names)
+        if class_names is not None
+        else [str(c) for c in range(out_dim)]
+    )
+    for (x, y), label in zip(logit_positions, labels, strict=True):
+        ax.text(
+            x,
+            y,
+            label,
+            ha="center",
+            va="center",
+            fontsize=8,
+            zorder=2,
+            bbox={"boxstyle": "round", "fc": "lightblue", "ec": "grey"},
+        )
+    if used_bypass:
+        ax.text(
+            bypass_position[0],
+            bypass_position[1],
+            "affine bypass\n(carried input)",
+            ha="center",
+            va="center",
+            fontsize=7,
+            zorder=2,
+            bbox={"boxstyle": "round", "fc": "lightgrey", "ec": "grey"},
+        )
+    ax.set_title(
+        f"{title} — top {top_edges} unit edges per consumer "
+        "(blue +, red -, width ~ |w|)"
+    )
     try:
         fig.savefig(path, dpi=110, bbox_inches="tight")
     finally:
