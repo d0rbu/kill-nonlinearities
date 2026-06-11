@@ -181,3 +181,25 @@ def test_plot_folded_dag_with_image_glyphs_and_class_names(tmp_path: Path) -> No
 def test_plot_folded_dag_refuses_wide_networks(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="surviving units"):
         network.plot_folded_dag(_folded(), tmp_path / "wide.png", max_units=2)
+
+
+def test_plot_folded_dag_rgb_glyphs(tmp_path: Path) -> None:
+    from kill_nonlinearities.config import ModelConfig
+    from kill_nonlinearities.models.mlp import ReLUMLP
+
+    torch.manual_seed(5)
+    model = ReLUMLP(ModelConfig(input_dim=12, hidden_dims=(4,), output_dim=3))
+    folded = trim_folded(fold_mlp(model))
+    out = network.plot_folded_dag(folded, tmp_path / "rgb.png", image_shape=(3, 2, 2))
+    assert out.stat().st_size > 0
+
+
+def test_plot_folded_dag_wraps_wide_stages(tmp_path: Path) -> None:
+    from kill_nonlinearities.config import ModelConfig
+    from kill_nonlinearities.models.mlp import ReLUMLP
+
+    torch.manual_seed(6)
+    model = ReLUMLP(ModelConfig(input_dim=6, hidden_dims=(40,), output_dim=3))
+    folded = trim_folded(fold_mlp(model))
+    out = network.plot_folded_dag(folded, tmp_path / "wide_ok.png", max_units=64)
+    assert out.stat().st_size > 0

@@ -75,8 +75,8 @@ def _collect(loader) -> tuple[torch.Tensor, torch.Tensor]:
     return torch.cat(xs), torch.cat(ys)
 
 
-def mnist_trees() -> list[dict]:
-    base = config_from_json(Path("configs/mnist.json"))
+def data_trees(config_path: str, lambdas: tuple[float, ...]) -> list[dict]:
+    base = config_from_json(Path(config_path))
     train_loader, _, test_loader = make_dataloaders(base)
     x_train, _ = _collect(train_loader)
     x_build = x_train[:BUILD_SAMPLES].double()
@@ -84,7 +84,7 @@ def mnist_trees() -> list[dict]:
     x_test = x_test.double()
 
     records: list[dict] = []
-    for lam in MNIST_LAMBDAS:
+    for lam in lambdas:
         model = build_model(base.model)
         load_checkpoint(_final_checkpoint(Path("runs") / f"{base.name}-{lam}"), model)
         model = model.double()
@@ -121,7 +121,8 @@ def mnist_trees() -> list[dict]:
             (tree_test.argmax(dim=1) == y_test[test_ok]).double().mean()
         )
         record = {
-            "experiment": "mnist_data_tree",
+            "experiment": "data_tree",
+            "dataset": base.name,
             "lam": lam,
             "build_samples": int(x_build.shape[0]),
             "branches": stats.n_branches,
@@ -139,7 +140,7 @@ def mnist_trees() -> list[dict]:
         }
         records.append(record)
         print(
-            f"mnist data-tree λ={lam:<4g}: leaves={stats.n_leaves:>4} "
+            f"{base.name} data-tree λ={lam:<4g}: leaves={stats.n_leaves:>4} "
             f"branches={stats.n_branches:>4} truncated={stats.n_truncated:>3} "
             f"depth={stats.depth:>3} buildΔ={build_diff:.1e} "
             f"test agree={agreement:.4f} novel={novel:.3f} "
@@ -165,9 +166,11 @@ def _census(model: PreActModel, loader, device: str) -> int:
 
 def region_census() -> list[dict]:
     records: list[dict] = []
-    targets = [("configs/mnist.json", lam) for lam in MNIST_LAMBDAS] + [
-        ("configs/cifar10-cnn.json", lam) for lam in CNN_LAMBDAS
-    ]
+    targets = (
+        [("configs/mnist.json", lam) for lam in MNIST_LAMBDAS]
+        + [("configs/cifar10.json", lam) for lam in MNIST_LAMBDAS]
+        + [("configs/cifar10-cnn.json", lam) for lam in CNN_LAMBDAS]
+    )
     for config_path, lam in targets:
         base = config_from_json(Path(config_path))
         train_loader, _, _ = make_dataloaders(base)
@@ -228,7 +231,11 @@ def _plot(records: list[dict], path: Path) -> None:
 
 def main() -> None:
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
-    records = mnist_trees() + region_census()
+    records = (
+        data_trees("configs/mnist.json", MNIST_LAMBDAS)
+        + data_trees("configs/cifar10.json", MNIST_LAMBDAS)
+        + region_census()
+    )
     (ASSET_DIR / "data_decompile_results.json").write_text(
         json.dumps({"runs": records}) + "\n"
     )

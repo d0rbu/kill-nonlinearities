@@ -270,15 +270,25 @@ def plot_folded_dag(
             return [0.5]
         return [i / (count - 1) for i in range(count)]
 
+    # Wide stages wrap into sub-columns of <= 32 units so tall networks stay
+    # within a sane figure height.
+    per_sub = 32
     positions: list[list[tuple[float, float]]] = []
+    max_rows = out_dim
     for col, width in enumerate(widths):
-        positions.append([(float(col), y) for y in _ys(max(width, 1))][:width])
+        n_sub = max(1, -(-width // per_sub))
+        rows_per = -(-width // n_sub) if width else 1
+        max_rows = max(max_rows, rows_per)
+        ys = _ys(rows_per)
+        pos: list[tuple[float, float]] = []
+        for j in range(width):
+            sub, row = divmod(j, rows_per)
+            pos.append((col + (sub - (n_sub - 1) / 2) * 0.22, ys[row]))
+        positions.append(pos)
     logit_positions = [(float(len(stages)), y) for y in _ys(out_dim)]
     bypass_position = (float(len(stages)) - 0.5, -0.18)
 
-    fig, ax = plt.subplots(
-        figsize=(3.2 * n_cols, max(4.0, 0.55 * max([*widths, out_dim])))
-    )
+    fig, ax = plt.subplots(figsize=(3.2 * n_cols, max(4.0, 0.55 * max_rows)))
     ax.axis("off")
     ax.set_xlim(-0.6, len(stages) + 0.6)
     ax.set_ylim(-0.35, 1.1)
@@ -353,9 +363,15 @@ def plot_folded_dag(
             x, y = positions[col][j]
             if col == 0 and image_shape is not None:
                 img = weight[j].reshape(image_shape)
-                bound = float(img.abs().max()) or 1.0
-                # Symmetric diverging colors, materialized as RGBA up front.
-                rgba = plt.get_cmap("RdBu_r")((img / bound + 1.0) / 2.0)
+                if len(image_shape) == 3 and image_shape[0] == 3:
+                    # RGB filters: per-filter min-max, channels last.
+                    lo_v, hi_v = float(img.min()), float(img.max())
+                    span = (hi_v - lo_v) or 1.0
+                    rgba = ((img - lo_v) / span).permute(1, 2, 0).numpy()
+                else:
+                    bound = float(img.abs().max()) or 1.0
+                    # Symmetric diverging colors, materialized as RGBA.
+                    rgba = plt.get_cmap("RdBu_r")((img / bound + 1.0) / 2.0)
                 box = OffsetImage(rgba, zoom=28.0 / max(image_shape))
                 ax.add_artist(AnnotationBbox(box, (x, y), frameon=True, zorder=2))
             else:

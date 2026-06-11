@@ -322,16 +322,23 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   | model | λ=0 | λ=1 | λ=10 |
   | --- | --- | --- | --- |
   | MNIST MLP (54,000 samples) | 54,000 — *one region per sample* | 10,667 | **371** |
+  | CIFAR-10 MLP (45,000 samples) | 45,000 | 45,000 | **44,917** |
   | CIFAR-10 CNN (45,000 samples) | 45,000 | — | **45,000** |
 
   ![region census](assets/data_decompile.png)
 
-  The regularizer compresses MNIST's program 146× (54,000 → 371 regions); the
-  **CIFAR CNN stays at one-region-per-image even at λ=10** — with ~5,200
-  conv0 positions still switching, no two images share a full sign pattern.
-  Decompiling the CNN globally needs the census driven down first: much
-  stronger/targeted consistency pressure, coarser branch predicates (e.g.
-  channel-level tests), or per-sample local programs.
+  The regularizer compresses MNIST's program 146× (54,000 → 371 regions), but
+  **CIFAR stays at ~one-region-per-image at λ=10 in *both* architectures**
+  (MLP: 44,917; CNN: 45,000 — with 98 resp. ~5,200 units still switching, no
+  two natural images share a full sign pattern). CIFAR data-driven trees
+  confirm it: budget-bound at every λ with ~100% novel-pattern rate on test
+  (agreement only 0.32 → 0.49 across λ=0 → 10). So region collapse is
+  substantially a **dataset** property, not just an architecture one: MNIST's
+  137 residual switching units at λ=10 are so correlated that the data lands
+  in 371 patterns, while CIFAR's high-entropy images make even 98 residual
+  bits near-unique per image. Decompiling CIFAR globally needs the census
+  driven down first: stronger/targeted consistency pressure, coarser branch
+  predicates (e.g. channel-level tests), or per-sample local programs.
 - **Result 3 — the class boundary is not the region borders.** Review caught
   that the toy overlay drew only the ReLU kinks (black) while the red/blue
   class edge mostly didn't lie on them. That is correct behavior made
@@ -355,7 +362,10 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   "affine bypass" node). MNIST λ=1's whole program is then one readable
   picture: 18 stroke-detector glyphs voting into 10 logits over a shared
   affine bypass (`assets/denonlin/mnist_dag_lam1.png`, also λ=0.5 with 55
-  units).
+  units). **CIFAR works too**: the folded λ=10 CIFAR MLP renders as a 98-unit
+  circuit with RGB filter glyphs wrapped into sub-columns
+  (`assets/denonlin/cifar_dag_lam10.png`) — the *intensional* view stays
+  legible exactly where the extensional tree (44,917 regions) cannot.
 - **Takeaway:** building the trees from the data (rather than the input box)
   is the right default — the box/LP machinery remains the *certification*
   layer (a natural hybrid: LP-certify a data-built tree's regions), while the
