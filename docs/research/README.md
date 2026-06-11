@@ -285,6 +285,62 @@ Tracked work, roughly in order. (File these as GitHub issues — see
 > Newest entries on top. Each entry: date, what was tried, config (λ, τ schedule, model,
 > data), result, and takeaway. Keep findings here so knowledge accumulates in one place.
 
+### 2026-06-11 — Phase 5 follow-up: data-driven trees, visual trees, and the region census
+
+- **Setup (review follow-ups):** three additions to the decompilation stack.
+  (1) **`decompile_mlp_data`** — the box/LP sign oracle was the reason
+  hull-scale decompilation drowned, so the tree can now be built *from the
+  data*: within a region, a unit's sign is read off the region's actual
+  samples and the recursion branches only where the data flips a unit — the
+  leaves are exactly the linear regions the data occupies. Leaf maps are
+  exact for every building sample (property-tested to 1e-9; a whole-layer GEMM
+  cache makes dataset-scale builds take seconds). (2) **`plot_decision_tree`**
+  — trees as node-and-edge diagrams (branch = tested unit, edges = ≤0 / >0,
+  leaves labeled e.g. by majority class). (3) The toy region figures now draw
+  **every branch hyperplane clipped to its own region** — all region borders,
+  including ones separating a class from itself — and each toy tree ships as
+  a diagram with per-leaf class/sample-count labels.
+- **Result 1 — the MNIST λ=10 network is, in practice, a 95-leaf decision
+  tree.** Data-driven trees built from 8,192 training samples
+  ([`scripts/data_decompile_report.py`](../../scripts/data_decompile_report.py)),
+  evaluated on the full held-out test set:
+
+  | λ | leaves | truncated | test agreement (argmax) | novel-pattern rate | tree test acc |
+  | --- | --- | --- | --- | --- | --- |
+  | 0 | 4,095 (budget) | 9 | 0.8431 | 1.000 | 0.8386 |
+  | 1 | 2,743 | 0 | 0.9696 | 0.224 | 0.9321 |
+  | 10 | **95** | 0 | **0.9999** | 0.016 | 0.9080 |
+
+  At λ=10 the 95-leaf program reproduces the network's prediction on 99.99% of
+  test images at the network's own accuracy (0.9080 vs 0.9081); at λ=0 every
+  test sample lands on a *novel* activation pattern (the leaf affine is never
+  its true linearization) and agreement is only by approximation.
+- **Result 2 — the region census answers "how far can we take this?".**
+  Counting **distinct activation sign patterns** over the full training split
+  (the leaf count a complete data-driven tree would need):
+
+  | model | λ=0 | λ=1 | λ=10 |
+  | --- | --- | --- | --- |
+  | MNIST MLP (54,000 samples) | 54,000 — *one region per sample* | 10,667 | **371** |
+  | CIFAR-10 CNN (45,000 samples) | 45,000 | — | **45,000** |
+
+  ![region census](assets/data_decompile.png)
+
+  The regularizer compresses MNIST's program 146× (54,000 → 371 regions); the
+  **CIFAR CNN stays at one-region-per-image even at λ=10** — with ~5,200
+  conv0 positions still switching, no two images share a full sign pattern.
+  Decompiling the CNN globally needs the census driven down first: much
+  stronger/targeted consistency pressure, coarser branch predicates (e.g.
+  channel-level tests), or per-sample local programs.
+- **Takeaway:** building the trees from the data (rather than the input box)
+  is the right default — the box/LP machinery remains the *certification*
+  layer (a natural hybrid: LP-certify a data-built tree's regions), while the
+  data oracle gives compact, faithful programs where consistency is high. The
+  census (`distinct regions ÷ samples`) is the cleanest single number for
+  "how decompilable is this network", and λ moves it by orders of magnitude on
+  the MLP. The toy now ships with full region-border overlays and tree
+  diagrams (`assets/decompile_toy_*`).
+
 ### 2026-06-11 — Phase 5: decompiling networks into nested conditionals
 
 - **Setup:** `analysis/decompile.py` (new): **exact piecewise-affine

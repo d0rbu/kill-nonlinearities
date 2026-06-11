@@ -28,14 +28,20 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+from collections import Counter
+
 import matplotlib.pyplot as plt
 import torch
 from torch import nn
 
 from kill_nonlinearities.analysis.decompile import (
+    Branch,
+    Leaf,
+    Node,
     decompile_mlp,
     evaluate_tree,
     render_tree,
+    route_leaves,
     tree_stats,
 )
 from kill_nonlinearities.analysis.ranges import data_box
@@ -46,6 +52,7 @@ from kill_nonlinearities.models.mlp import ReLUMLP
 from kill_nonlinearities.regularization.loss import sign_consistency_loss
 from kill_nonlinearities.training.checkpoint import load_checkpoint
 from kill_nonlinearities.training.schedule import TemperatureSchedule
+from kill_nonlinearities.viz.network import plot_decision_tree
 
 ASSET_DIR = Path("docs/research/assets")
 TOY_LAMBDAS = (0.0, 0.3)
@@ -120,7 +127,90 @@ def toy_experiment() -> list[dict]:
             flush=True,
         )
         _plot_toy_regions(model, tree, lam, stats.n_leaves)
+        _plot_toy_tree(tree, x.double(), y, lam)
     return records
+
+
+def _plot_toy_tree(tree: Node, x: torch.Tensor, y: torch.Tensor, lam: float) -> None:
+    """Tree diagram with leaves labeled by their majority class + sample count."""
+    counts: dict[int, Counter] = {}
+    for leaf, label in zip(route_leaves(tree, x), y.tolist(), strict=True):
+        counts.setdefault(id(leaf), Counter())[label] += 1
+
+    def leaf_label(leaf: Leaf) -> str:
+        tally = counts.get(id(leaf))
+        if tally is None:
+            return "no data"
+        cls, n = tally.most_common(1)[0]
+        return f"{'in' if cls == 1 else 'out'}\n({n})"
+
+    plot_decision_tree(
+        tree,
+        ASSET_DIR / f"decompile_toy_tree_lam{lam:g}.png",
+        leaf_label=leaf_label,
+        title=f"toy λ={lam:g}: decompiled decision tree "
+        "(leaf = majority class, training samples)",
+    )
+
+
+Point = tuple[float, float]
+
+
+def _halfplane_value(point: Point, w: list[float], b: float) -> float:
+    return w[0] * point[0] + w[1] * point[1] + b
+
+
+def _clip_polygon(
+    poly: list[Point], w: list[float], b: float, keep_high: bool
+) -> list[Point]:
+    """Sutherland-Hodgman clip of a convex polygon against one half-plane."""
+    out: list[Point] = []
+    for i in range(len(poly)):
+        cur, nxt = poly[i], poly[(i + 1) % len(poly)]
+        cv, nv = _halfplane_value(cur, w, b), _halfplane_value(nxt, w, b)
+        cur_in = cv > 0 if keep_high else cv <= 0
+        nxt_in = nv > 0 if keep_high else nv <= 0
+        if cur_in:
+            out.append(cur)
+        if cur_in != nxt_in:
+            t = cv / (cv - nv)
+            out.append((cur[0] + t * (nxt[0] - cur[0]), cur[1] + t * (nxt[1] - cur[1])))
+    return out
+
+
+def _chord(poly: list[Point], w: list[float], b: float) -> list[Point]:
+    """The segment of the line w·v + b = 0 inside a convex polygon."""
+    points: list[Point] = []
+    for i in range(len(poly)):
+        cur, nxt = poly[i], poly[(i + 1) % len(poly)]
+        cv, nv = _halfplane_value(cur, w, b), _halfplane_value(nxt, w, b)
+        if (cv > 0) != (nv > 0):
+            t = cv / (cv - nv)
+            points.append(
+                (cur[0] + t * (nxt[0] - cur[0]), cur[1] + t * (nxt[1] - cur[1]))
+            )
+    return points[:2]
+
+
+def _draw_boundaries(ax, node, poly: list[Point]) -> None:
+    """Draw EVERY branch hyperplane clipped to its own region (recursively).
+
+    This renders all region borders — including ones separating two regions
+    whose leaves predict the same class.
+    """
+    if not isinstance(node, Branch) or len(poly) < 3:
+        return
+    w = [float(node.weight[0]), float(node.weight[1])]
+    segment = _chord(poly, w, node.bias)
+    if len(segment) == 2:
+        ax.plot(
+            [segment[0][0], segment[1][0]],
+            [segment[0][1], segment[1][1]],
+            color="black",
+            lw=0.7,
+        )
+    _draw_boundaries(ax, node.low, _clip_polygon(poly, w, node.bias, keep_high=False))
+    _draw_boundaries(ax, node.high, _clip_polygon(poly, w, node.bias, keep_high=True))
 
 
 def _plot_toy_regions(model: ReLUMLP, tree, lam: float, leaves: int) -> None:
@@ -136,9 +226,13 @@ def _plot_toy_regions(model: ReLUMLP, tree, lam: float, leaves: int) -> None:
         cmap="coolwarm",
         alpha=0.6,
     )
+    # Every region border, even between same-class regions.
+    _draw_boundaries(ax, tree, [(-2.0, -2.0), (2.0, -2.0), (2.0, 2.0), (-2.0, 2.0)])
     circle = plt.Circle((0, 0), 1.0, fill=False, color="black", linestyle=":")
     ax.add_patch(circle)
-    ax.set_title(f"toy λ={lam:g}: decompiled program ({leaves} leaves)")
+    ax.set_title(
+        f"toy λ={lam:g}: decompiled program ({leaves} leaves; all region borders)"
+    )
     fig.tight_layout()
     try:
         fig.savefig(ASSET_DIR / f"decompile_toy_lam{lam:g}.png", dpi=110)
@@ -208,11 +302,23 @@ def mnist_experiment() -> list[dict]:
 
 
 def main() -> None:
-    ASSET_DIR.mkdir(parents=True, exist_ok=True)
-    records = toy_experiment() + mnist_experiment()
-    (ASSET_DIR / "decompile_results.json").write_text(
-        json.dumps({"runs": records}) + "\n"
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Phase-5 decompilation report.")
+    parser.add_argument(
+        "--toy-only",
+        action="store_true",
+        help="regenerate only the (fast) toy artifacts, skipping the MNIST trees",
     )
+    args = parser.parse_args()
+
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    records = toy_experiment()
+    if not args.toy_only:
+        records += mnist_experiment()
+        (ASSET_DIR / "decompile_results.json").write_text(
+            json.dumps({"runs": records}) + "\n"
+        )
     print("wrote", ASSET_DIR / "decompile_results.json")
 
 

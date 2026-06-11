@@ -14,7 +14,7 @@ Headless rendering rule as in ``viz.plots``: Agg before pyplot, no ``show``,
 ``savefig`` then ``close``; every function takes a full file path and returns it.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import matplotlib
@@ -24,10 +24,12 @@ matplotlib.use("Agg")  # must precede the pyplot import below
 import matplotlib.pyplot as plt
 from torch import Tensor
 
+from kill_nonlinearities.analysis.decompile import Branch, Leaf, Node, tree_stats
 from kill_nonlinearities.analysis.statistics import NeuronStats
 
 __all__ = [
     "plot_class_q_matrix",
+    "plot_decision_tree",
     "plot_input_filters",
     "plot_mode_composition",
     "plot_spatial_q_map",
@@ -131,6 +133,94 @@ def plot_spatial_q_map(
     fig.suptitle(f"{title} (0 = always-negative, 1 = always-positive)")
     if image is not None:
         fig.colorbar(image, ax=axes, shrink=0.8, label="hard q")
+    try:
+        fig.savefig(path, dpi=110, bbox_inches="tight")
+    finally:
+        plt.close(fig)
+    return path
+
+
+def plot_decision_tree(
+    node: Node,
+    path: Path,
+    leaf_label: Callable[[Leaf], str] | None = None,
+    title: str = "Decompiled decision tree",
+    max_terminals: int = 128,
+) -> Path:
+    """Render a decompiled tree as a node-and-edge diagram (phase 5).
+
+    Branch nodes show the tested unit (``site[index]``); the left edge is the
+    ``≤ 0`` (dead) side and the right edge the ``> 0`` (fires) side. Leaves
+    show ``leaf_label(leaf)`` (default ``"affine"`` — pass e.g. a majority-
+    class labeler); truncated regions render as ``…``. Refuses trees with more
+    than ``max_terminals`` terminal nodes (the figure would be illegible).
+    """
+    stats = tree_stats(node)
+    n_terminals = stats.n_leaves + stats.n_truncated
+    if n_terminals > max_terminals:
+        raise ValueError(
+            f"tree has {n_terminals} terminal nodes; refusing to render more "
+            f"than {max_terminals} (raise max_terminals to override)"
+        )
+
+    positions: dict[int, tuple[float, float]] = {}
+    next_x = [0.0]
+
+    def _place(current: Node, depth: int) -> float:
+        if isinstance(current, Branch):
+            x_low = _place(current.low, depth + 1)
+            x_high = _place(current.high, depth + 1)
+            x = (x_low + x_high) / 2
+        else:
+            x = next_x[0]
+            next_x[0] += 1.0
+        positions[id(current)] = (x, float(-depth))
+        return x
+
+    _place(node, 0)
+
+    fig, ax = plt.subplots(
+        figsize=(
+            max(6.0, 0.55 * n_terminals),
+            max(3.0, 1.0 * (stats.depth + 1)),
+        )
+    )
+    ax.axis("off")
+
+    def _draw(current: Node) -> None:
+        x, y = positions[id(current)]
+        if isinstance(current, Branch):
+            for child, edge in ((current.low, "≤ 0"), (current.high, "> 0")):
+                cx, cy = positions[id(child)]
+                ax.plot([x, cx], [y, cy], color="grey", lw=0.8, zorder=1)
+                ax.text(
+                    (x + cx) / 2,
+                    (y + cy) / 2,
+                    edge,
+                    fontsize=6,
+                    color="grey",
+                    ha="center",
+                )
+                _draw(child)
+            text, color = f"{current.site}[{current.index}]", "lightyellow"
+        elif isinstance(current, Leaf):
+            text = leaf_label(current) if leaf_label is not None else "affine"
+            color = "lightblue"
+        else:
+            text, color = "…", "mistyrose"
+        ax.text(
+            x,
+            y,
+            text,
+            ha="center",
+            va="center",
+            fontsize=7,
+            zorder=2,
+            bbox={"boxstyle": "round", "fc": color, "ec": "grey"},
+        )
+
+    _draw(node)
+    ax.set_title(title)
     try:
         fig.savefig(path, dpi=110, bbox_inches="tight")
     finally:

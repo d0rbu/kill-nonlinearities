@@ -11,12 +11,20 @@ piecewise-linear semantics restricted to the box, rendered as a program:
     else:
         logits = A x + c
 
-Per region, each unit's sign is decided by (1) a closed-form range of its
-affine map over the box (free), then (2) an exact LP over the region polytope
-(box ∩ accumulated half-spaces, HiGHS) if the box range straddles zero, and
-only then (3) a branch. ``max_leaves`` bounds the enumeration; exhausted
-regions become ``Truncated`` nodes (reported, never silently dropped).
-Assigned ``ZERO``/``IDENTITY`` modes are honored as exact affine behavior.
+Two sign oracles build the same tree type:
+
+- **Box-driven** (``decompile_mlp``): per region, each unit's sign is decided
+  by (1) a closed-form range of its affine map over the box (free), then (2)
+  an exact LP over the region polytope (box ∩ accumulated half-spaces, HiGHS),
+  and only then (3) a branch. Leaves are exact on their *entire* region.
+- **Data-driven** (``decompile_mlp_data``): the sign over a region is read off
+  the region's actual samples, so the tree enumerates only the linear regions
+  the data occupies. Leaves are exact for every building sample; held-out
+  agreement is an empirical question.
+
+``max_leaves`` bounds the enumeration; exhausted regions become ``Truncated``
+nodes (reported, never silently dropped). Assigned ``ZERO``/``IDENTITY`` modes
+are honored as exact affine behavior.
 
 Everything is float64. LP-decided signs are widened by the same solver-slack
 rule as ``analysis.ranges``, so leaf affine maps are exact and branch
@@ -42,8 +50,10 @@ __all__ = [
     "TreeStats",
     "Truncated",
     "decompile_mlp",
+    "decompile_mlp_data",
     "evaluate_tree",
     "render_tree",
+    "route_leaves",
     "tree_stats",
 ]
 
@@ -288,6 +298,175 @@ def _solve(
     if result.status != 0:
         raise RuntimeError(f"region LP failed with status {result.status}")
     return float(result.fun)
+
+
+def decompile_mlp_data(model: ReLUMLP, x: Tensor, max_leaves: int = 4096) -> Node:
+    """Data-driven decompilation: branch only where the DATA flips a unit.
+
+    Builds the tree from the sample set ``x`` instead of an input box: within
+    a region (the samples selected by the branch path), a unit whose
+    pre-activation keeps one sign across the region's samples is folded as
+    stable, and the recursion branches only on units the data actually flips
+    there — so the leaves are exactly the linear regions the data occupies
+    (up to units that never needed a branch). Leaf affine maps are **exact
+    for every building sample** routed to them (tested). A *fresh* input that
+    follows the same branch path gets the leaf's affine map, which is exact
+    iff its non-branched units share the region's signs — the agreement rate
+    of that assumption on held-out data is an experiment, not a guarantee.
+    ``ZERO``/``IDENTITY`` modes are honored exactly as in ``decompile_mlp``.
+    """
+    xs = x.detach().flatten(1).double()
+    if xs.shape[0] == 0:
+        raise ValueError("decompile_mlp_data requires at least one sample")
+    layers = [
+        (
+            site,
+            linear.weight.detach().double(),
+            linear.bias.detach().double(),
+            act.mode.clone(),
+        )
+        for site, linear, act in zip(
+            model.site_names, model.linears, model.activations, strict=True
+        )
+    ]
+    head = (model.head.weight.detach().double(), model.head.bias.detach().double())
+    d = int(xs.shape[1])
+    return _walk_data(
+        layers,
+        head,
+        layer_idx=0,
+        start_index=0,
+        act_m=torch.eye(d, dtype=torch.float64),
+        act_c=torch.zeros(d, dtype=torch.float64),
+        pre_m=None,
+        pre_c=None,
+        xs=xs,
+        z_layer=None,
+        budget=_Budget(max_leaves),
+    )
+
+
+def _walk_data(
+    layers: list[tuple[str, Tensor, Tensor, Tensor]],
+    head: tuple[Tensor, Tensor],
+    layer_idx: int,
+    start_index: int,
+    act_m: Tensor,
+    act_c: Tensor,
+    pre_m: Tensor | None,
+    pre_c: Tensor | None,
+    xs: Tensor,
+    z_layer: Tensor | None,
+    budget: _Budget,
+) -> Node:
+    """The resume-style walk of ``_walk``, with the data as the sign oracle.
+
+    Same affine bookkeeping; a unit's sign over the region is read off the
+    region's samples instead of box ranges/LPs, and branching splits the
+    sample set (both sides are non-empty by construction). ``z_layer`` caches
+    the region samples' pre-activations for the whole current layer — one GEMM
+    per (region, layer) instead of a dot product per unit, which is what makes
+    dataset-scale builds tractable; children inherit row slices of it.
+    """
+    while layer_idx < len(layers):
+        site, weight, bias, mode = layers[layer_idx]
+        if pre_m is None:
+            pre_m = weight @ act_m
+            pre_c = weight @ act_c + bias
+            act_m = pre_m.clone()
+            act_c = pre_c.clone()
+        assert pre_c is not None
+        if z_layer is None:
+            z_layer = xs @ pre_m.T + pre_c
+        for j in range(start_index, int(weight.shape[0])):
+            mode_j = int(mode[j])
+            if mode_j == int(ActivationMode.ZERO):
+                act_m[j] = 0.0
+                act_c[j] = 0.0
+                continue
+            if mode_j == int(ActivationMode.IDENTITY):
+                continue
+            fired = z_layer[:, j] > 0
+            if bool(fired.all()):
+                continue  # identity on this region's data
+            if not bool(fired.any()):
+                act_m[j] = 0.0
+                act_c[j] = 0.0
+                continue
+            if budget.remaining < 2:
+                return Truncated()
+            low_m = act_m.clone()
+            low_c = act_c.clone()
+            low_m[j] = 0.0
+            low_c[j] = 0.0
+            low = _walk_data(
+                layers,
+                head,
+                layer_idx,
+                j + 1,
+                low_m,
+                low_c,
+                pre_m,
+                pre_c,
+                xs[~fired],
+                z_layer[~fired],
+                budget,
+            )
+            high = _walk_data(
+                layers,
+                head,
+                layer_idx,
+                j + 1,
+                act_m.clone(),
+                act_c.clone(),
+                pre_m,
+                pre_c,
+                xs[fired],
+                z_layer[fired],
+                budget,
+            )
+            return Branch(
+                site=site,
+                index=j,
+                weight=pre_m[j].clone(),
+                bias=float(pre_c[j]),
+                low=low,
+                high=high,
+            )
+        layer_idx += 1
+        start_index = 0
+        pre_m = None
+        pre_c = None
+        z_layer = None  # next layer's pre-acts depend on the resolved rows
+    if not budget.take_leaf():
+        return Truncated()
+    head_w, head_b = head
+    return Leaf(weight=head_w @ act_m, bias=head_w @ act_c + head_b)
+
+
+def route_leaves(node: Node, x: Tensor) -> list[Node]:
+    """The terminal node (``Leaf``/``Truncated``) each sample routes to.
+
+    Consistent with ``evaluate_tree``'s branching (``z > 0`` goes high); unlike
+    ``evaluate_tree`` it does not raise on ``Truncated`` — callers can mask.
+    """
+    xs = x.detach().flatten(1).double()
+    out: list[Node] = [node] * int(xs.shape[0])
+
+    def _route(current: Node, idx: Tensor) -> None:
+        if isinstance(current, Branch):
+            z = xs[idx] @ current.weight + current.bias
+            high = z > 0
+            if bool((~high).any()):
+                _route(current.low, idx[~high])
+            if bool(high.any()):
+                _route(current.high, idx[high])
+            return
+        for i in idx.tolist():
+            out[i] = current
+
+    _route(node, torch.arange(int(xs.shape[0])))
+    return out
 
 
 def evaluate_tree(node: Node, x: Tensor) -> Tensor:

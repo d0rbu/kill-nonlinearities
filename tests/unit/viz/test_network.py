@@ -112,3 +112,42 @@ def test_plot_spatial_q_map_panel_labels_override_titles(tmp_path: Path) -> None
         panel_labels=("plane", "car", "bird"),
     )
     assert out.stat().st_size > 0
+
+
+def _toy_tree():
+    from kill_nonlinearities.analysis.decompile import Branch, Leaf, Truncated
+
+    leaf = Leaf(weight=torch.zeros(2, 3), bias=torch.zeros(2))
+    inner = Branch(
+        site="relu0",
+        index=1,
+        weight=torch.ones(3),
+        bias=0.5,
+        low=Truncated(),
+        high=Leaf(weight=torch.ones(2, 3), bias=torch.ones(2)),
+    )
+    return Branch(
+        site="relu0", index=0, weight=torch.ones(3), bias=-0.5, low=leaf, high=inner
+    )
+
+
+def test_plot_decision_tree_writes_nonempty_file(tmp_path: Path) -> None:
+    out = network.plot_decision_tree(_toy_tree(), tmp_path / "tree.png")
+    assert out.stat().st_size > 0
+
+
+def test_plot_decision_tree_accepts_leaf_labeler_and_single_leaf(
+    tmp_path: Path,
+) -> None:
+    from kill_nonlinearities.analysis.decompile import Leaf
+
+    leaf = Leaf(weight=torch.zeros(2, 3), bias=torch.zeros(2))
+    out = network.plot_decision_tree(
+        leaf, tmp_path / "leaf.png", leaf_label=lambda _: "class 7"
+    )
+    assert out.stat().st_size > 0
+
+
+def test_plot_decision_tree_refuses_huge_trees(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="terminal nodes"):
+        network.plot_decision_tree(_toy_tree(), tmp_path / "huge.png", max_terminals=1)

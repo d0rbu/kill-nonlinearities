@@ -171,3 +171,68 @@ def test_invalid_inputs_are_rejected() -> None:
         decompile_mlp(model, lo, lo - 1.0)
     with pytest.raises(ValueError, match="max_leaves"):
         decompile_mlp(model, lo, lo + 1.0, max_leaves=0)
+
+
+def test_data_tree_is_exact_on_every_building_sample() -> None:
+    """Property core: the data-driven tree reproduces the network on its data."""
+    from kill_nonlinearities.analysis.decompile import decompile_mlp_data
+
+    model = _model((5, 4), seed=43)
+    x = _samples(
+        -2 * torch.ones(INPUT_DIM, dtype=torch.float64),
+        2 * torch.ones(INPUT_DIM, dtype=torch.float64),
+        n=256,
+        seed=47,
+    )
+    tree = decompile_mlp_data(model, x, max_leaves=4096)
+    assert tree_stats(tree).n_truncated == 0
+    model.eval()
+    with torch.no_grad():
+        torch.testing.assert_close(
+            evaluate_tree(tree, x), model(x).logits, rtol=0, atol=1e-9
+        )
+
+
+def test_data_tree_branches_only_on_units_the_data_flips() -> None:
+    """A dataset on one side of every hyperplane yields a single leaf."""
+    from kill_nonlinearities.analysis.decompile import decompile_mlp_data
+
+    model = _model((4,), seed=53)
+    with torch.no_grad():
+        model.linears[0].bias.copy_(torch.full((4,), 10.0).double())
+    x = 0.01 * torch.randn(32, INPUT_DIM, dtype=torch.float64)
+    tree = decompile_mlp_data(model, x)
+    assert isinstance(tree, Leaf)
+
+
+def test_data_tree_rejects_empty_sample_set() -> None:
+    from kill_nonlinearities.analysis.decompile import decompile_mlp_data
+
+    model = _model((2,), seed=59)
+    with pytest.raises(ValueError, match="at least one sample"):
+        decompile_mlp_data(model, torch.zeros(0, INPUT_DIM))
+
+
+def test_route_leaves_matches_evaluate_tree() -> None:
+    """Each sample's routed leaf evaluates to the tree's output for it."""
+    from kill_nonlinearities.analysis.decompile import (
+        decompile_mlp_data,
+        route_leaves,
+    )
+
+    model = _model((4, 3), seed=61)
+    x = _samples(
+        -torch.ones(INPUT_DIM, dtype=torch.float64),
+        torch.ones(INPUT_DIM, dtype=torch.float64),
+        n=64,
+        seed=67,
+    )
+    tree = decompile_mlp_data(model, x)
+    leaves = route_leaves(tree, x)
+    full = evaluate_tree(tree, x)
+    for i, leaf in enumerate(leaves):
+        assert isinstance(leaf, Leaf)
+        # Tolerance, not bitwise: single-row vs batched GEMM reassociate.
+        torch.testing.assert_close(
+            evaluate_tree(leaf, x[i : i + 1]), full[i : i + 1], rtol=0, atol=1e-12
+        )
