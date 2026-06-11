@@ -265,12 +265,14 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   (what did the network *actually* need its remaining nonlinearity for?). *Tools
   implemented* (`viz/network.py`: mode composition, conv spatial q-maps, input-space
   filters of survivors / folded affine maps) with first findings in the log.
-- [ ] **Phase 4 — range analysis across layers (LP/simplex).** From the input ranges and
+- [~] **Phase 4 — range analysis across layers (LP/simplex).** From the input ranges and
   the weights, bound each neuron's pre-activation range by solving a per-neuron linear
   program (simplex), then propagate those bounds layer by layer through the whole
   network. (Interval/LP-based bound propagation in the spirit of NN-verification
   tooling; ranges also certify sign-consistency *for the whole input box*, not just the
-  data sample — a stronger guarantee than the empirical $q_i$.)
+  data sample — a stronger guarantee than the empirical $q_i$.) *Implemented* for MLPs
+  (`analysis/ranges.py`: mode-aware IBP + per-neuron HiGHS LPs with the triangle
+  relaxation; `certified_modes` feeds surgery directly).
 - [ ] **Phase 5 — decompile to conditionals.** Use the range analysis to translate the
   weights + surviving nonlinearities into explicit conditionals (decision-tree-like
   structure): a ReLU whose range crosses zero is a branch; everything between branches
@@ -280,6 +282,56 @@ Tracked work, roughly in order. (File these as GitHub issues — see
 
 > Newest entries on top. Each entry: date, what was tried, config (λ, τ schedule, model,
 > data), result, and takeaway. Keep findings here so knowledge accumulates in one place.
+
+### 2026-06-11 — Phase 4: LP range analysis — empirical consistency is not box-certified consistency
+
+- **Setup:** `analysis/ranges.py` (new): per-neuron pre-activation bounds over an
+  input box, propagated layer by layer — **IBP** (the box-LP's closed form,
+  applied recursively) and **LP** (two HiGHS solves per neuron over the input
+  box with every previous layer as linear constraints: sign-stable /
+  `IDENTITY` / `ZERO` units exact, unstable ReLUs via the triangle relaxation).
+  Mode-aware, float64, bounds widened by solver-tolerance slack;
+  `certified_modes` emits surgery-consumable `ActivationMode` tensors. A
+  certified neuron is sign-consistent for **every** input in the box — strictly
+  stronger than the empirical hard q. Property tests: soundness on sampled
+  inputs under random mode assignments, LP = the closed form on layer 1,
+  LP ⊆ IBP, point-box exactness, certified ⇒ sign-holding on samples.
+- **Result 1 — the full data box certifies *nothing*, at every λ.**
+  Over the box hull (per-pixel train min/max), certified counts are **0/512 for
+  all 10 MNIST λs and 0/512 for CIFAR λ ∈ {0, 1, 10}** — including MNIST λ=10,
+  where *all 512 neurons* are empirically near-consistent and 375 exactly so
+  ([`scripts/range_certify.py`](../../scripts/range_certify.py), ~75 s/MNIST
+  model and ~5 min/CIFAR model for 1,024 LPs; IBP is instant; LP bounds are
+  21–23% tighter than IBP throughout). The regularizer earns consistency over
+  the **data distribution**; the box hull contains off-manifold corners (e.g.
+  every pixel at its extreme simultaneously) whose pre-activation excursions
+  dwarf any trained margin. (The certified ⇒ empirical cross-check passes
+  vacuously at full scale; the unit suite pins the non-vacuous version.)
+- **Result 2 — certification appears as the box shrinks, and λ buys margin.**
+  Shrinking the box toward its center
+  ([`scripts/range_scale_sweep.py`](../../scripts/range_scale_sweep.py)):
+
+  | scale s | λ=0 certified | λ=10 certified |
+  | --- | --- | --- |
+  | 0.01 | 482 (303 dead / 179 on) | 482 (200 / 282) |
+  | 0.05 | 286 | **375** |
+  | 0.1 | 98 | **267 (2.7×)** |
+  | 0.25 | 5 | 1 |
+  | ≥ 0.5 | 0 | 0 |
+
+  ![certified vs box scale](assets/range_scale.png)
+
+  λ=10 certifies far more at moderate scales (and with the always-on-heavy
+  composition its training produced), but both collapse by s=0.25: trained
+  margins are data-scale, not hull-scale.
+- **Takeaway:** the LP machinery is sound, tighter than IBP, and *the right
+  instrument*, but certified eliminability needs **smaller regions** (local
+  boxes — exactly what phase 5's decompilation uses as it fixes signs
+  branch-by-branch) or **certified training** (an IBP/LP margin term in the
+  loss — a natural future variant of the regularizer). Empirical-vs-certified
+  is the project's cleanest expression of the manifold-vs-hull gap.
+
+  ![range certification](assets/range_certify.png)
 
 ### 2026-06-11 — Phase 3: what the de-nonlinearized networks look like
 

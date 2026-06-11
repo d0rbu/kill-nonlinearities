@@ -133,9 +133,10 @@ src/kill_nonlinearities/
 │   └── trainer.py       #   train(...) → TrainResult
 ├── data/                # dataloaders + probe selection
 │   └── datasets.py      #   make_dataloaders; select_probe_neurons; make_probe_batch
-├── analysis/            # hard sign statistics + neuron ranking/selection
+├── analysis/            # hard sign statistics + neuron ranking/selection + ranges
 │   ├── statistics.py    #   collect_pre_activations; neuron_stats; collect_history
-│   └── selection.py     #   rank_by_entropy/rank_random; make_k_grid; select_topk; assign_modes
+│   ├── selection.py     #   rank_by_entropy/rank_random; make_k_grid; select_topk; assign_modes
+│   └── ranges.py        #   phase-4: IBP + LP pre-activation bounds over an input box; certified_modes
 ├── surgery/             # masked-activation surgery + structural folding (phase 2)
 │   ├── apply.py         #   apply_modes; evaluate_accuracy; k_sweep
 │   └── fold.py          #   fold_mlp/trim_folded → FoldedMLP (ZERO pruned, IDENTITY composed)
