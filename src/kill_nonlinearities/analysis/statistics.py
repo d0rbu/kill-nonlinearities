@@ -40,6 +40,37 @@ def collect_pre_activations(
     return {site: torch.cat(chunks[site], dim=0) for site in site_names}
 
 
+def class_conditional_q(
+    model: PreActModel, loader: DataLoader, device: str, num_classes: int
+) -> dict[str, Tensor]:
+    """Per-class hard fraction-positive: ``q[c, i] = Pr[z_i > 0 | label = c]``.
+
+    Returns one ``[num_classes, N_site]`` float64 tensor per site (phase 3:
+    class-indexed firing maps). Uses the same ``model(x).pre_activations`` path
+    as ``collect_pre_activations``. Classes absent from ``loader`` yield NaN
+    rows (0/0) rather than a silent zero.
+    """
+    model.eval()
+    positives: dict[str, Tensor] = {}
+    totals = torch.zeros(num_classes, dtype=torch.float64)
+    with torch.no_grad():
+        for x, y in loader:
+            out = model(x.to(device))
+            onehot = torch.zeros((int(y.shape[0]), num_classes), dtype=torch.float64)
+            onehot[torch.arange(y.shape[0]), y] = 1.0
+            totals += onehot.sum(dim=0)
+            for site, z in zip(out.site_names, out.pre_activations, strict=True):
+                fired = (z > 0).to(torch.float64).cpu()
+                if site not in positives:
+                    positives[site] = torch.zeros(
+                        (num_classes, int(z.shape[1])), dtype=torch.float64
+                    )
+                positives[site] += onehot.T @ fired
+    if not positives:
+        raise ValueError("class_conditional_q requires a non-empty loader")
+    return {site: counts / totals[:, None] for site, counts in positives.items()}
+
+
 @dataclass(frozen=True)
 class NeuronStats:
     site: str

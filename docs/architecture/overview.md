@@ -141,6 +141,7 @@ src/kill_nonlinearities/
 │   └── fold.py          #   fold_mlp/trim_folded → FoldedMLP (ZERO pruned, IDENTITY composed)
 ├── viz/                 # headless figures + GIFs (matplotlib Agg, imageio+pillow)
 │   ├── plots.py
+│   ├── network.py       #   phase-3: mode composition; spatial q-maps; input-space filters
 │   └── animation.py
 └── experiments/         # end-to-end runner + wandb sweep glue
     ├── run.py           #   run_experiment(config); CLI

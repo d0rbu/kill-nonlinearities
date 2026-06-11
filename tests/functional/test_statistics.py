@@ -78,3 +78,29 @@ def test_neuron_stats_vs_hand_computed() -> None:
     # mean pre-activation per neuron.
     assert math.isclose(s0.mean_pre, (1.0 - 2.0 + 3.0) / 3.0, rel_tol=0, abs_tol=1e-6)
     assert math.isclose(s1.mean_pre, -1.0, rel_tol=0, abs_tol=1e-6)
+
+
+def test_class_conditional_q_matches_hand_computed_split() -> None:
+    """q[c, i] is the fraction-positive among inputs of class c only."""
+    from kill_nonlinearities.analysis.statistics import class_conditional_q
+
+    torch.manual_seed(1)
+    model = ReLUMLP(ModelConfig(input_dim=4, hidden_dims=(3,), output_dim=2))
+    x = torch.randn(8, 4)
+    y = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1])
+    loader = DataLoader(TensorDataset(x, y), batch_size=3, shuffle=False)
+
+    per_class = class_conditional_q(model, loader, "cpu", num_classes=3)
+
+    model.eval()
+    with torch.no_grad():
+        z = model(x).pre_activations[0]
+    site_q = per_class["relu0"]
+    torch.testing.assert_close(
+        site_q[0], (z[:4] > 0).double().mean(dim=0), rtol=0, atol=1e-12
+    )
+    torch.testing.assert_close(
+        site_q[1], (z[4:] > 0).double().mean(dim=0), rtol=0, atol=1e-12
+    )
+    # Class 2 never appears: its row is NaN (0/0), not a silent zero.
+    assert bool(site_q[2].isnan().all())
