@@ -286,10 +286,14 @@ Tracked work, roughly in order. (File these as GitHub issues — see
 ### 2026-06-11 — Phase 4: LP range analysis — empirical consistency is not box-certified consistency
 
 - **Setup:** `analysis/ranges.py` (new): per-neuron pre-activation bounds over an
-  input box, propagated layer by layer — **IBP** (the box-LP's closed form,
-  applied recursively) and **LP** (two HiGHS solves per neuron over the input
-  box with every previous layer as linear constraints: sign-stable /
-  `IDENTITY` / `ZERO` units exact, unstable ReLUs via the triangle relaxation).
+  input box, propagated layer by layer. Two methods: **IBP** (*interval bound
+  propagation* — over a box, the extreme of an affine function has a closed
+  form, `W⁺·hi + W⁻·lo + b`; apply it layer by layer through the activation)
+  and **LP** (*linear programming* — the roadmap's simplex idea: two HiGHS
+  solves per neuron over the input box with every previous layer kept as
+  linear constraints, which preserves cross-neuron correlations IBP throws
+  away: sign-stable / `IDENTITY` / `ZERO` units exact, unstable ReLUs via the
+  triangle relaxation).
   Mode-aware, float64, bounds widened by solver-tolerance slack;
   `certified_modes` emits surgery-consumable `ActivationMode` tensors. A
   certified neuron is sign-consistent for **every** input in the box — strictly
@@ -330,6 +334,18 @@ Tracked work, roughly in order. (File these as GitHub issues — see
   branch-by-branch) or **certified training** (an IBP/LP margin term in the
   loss — a natural future variant of the regularizer). Empirical-vs-certified
   is the project's cleanest expression of the manifold-vs-hull gap.
+- **Addendum — the zero-certification result is constructive, not a relaxation
+  artifact.** "Certified 0" only means *we couldn't prove* consistency (the
+  bounds over-approximate for depth ≥ 2). [`scripts/flip_witnesses.py`](../../scripts/flip_witnesses.py)
+  upgrades the claim by **constructing witness inputs inside the box**: for
+  layer 1 the box extreme of `w·x + b` is attained at the known corner
+  `x⁺ = where(w > 0, hi, lo)` (exact, no relaxation), and for layer 2 projected
+  sign-gradient search finds witnesses (successes are proofs). Result, MNIST
+  λ ∈ {0, 10}: **all 512/512 neurons flip — every layer-1 unit with exact
+  corner witnesses, every layer-2 unit with PGD-found witness pairs** —
+  including the λ=10 network where the *data* never flips 375 of them. It is
+  genuinely possible to construct an in-box input pair producing both signs
+  for every ReLU; the box hull's corners are simply nothing like the data.
 
   ![range certification](assets/range_certify.png)
 

@@ -1,0 +1,1 @@
+{"runs": [{"lam": 0.0, "layer1_flippable_exact": 256, "layer1_total": 256, "layer2_flippable_witnessed": 256, "layer2_total": 256}, {"lam": 10.0, "layer1_flippable_exact": 256, "layer1_total": 256, "layer2_flippable_witnessed": 256, "layer2_total": 256}]}
