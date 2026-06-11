@@ -58,7 +58,18 @@ def test_optim_config_defaults() -> None:
 def test_reg_config_defaults() -> None:
     cfg = RegConfig()
     assert cfg.lam == 0.0
+    assert cfg.granularity == "neuron"
     assert cfg.entropy_eps == 1e-6
+
+
+def test_reg_config_accepts_channel_granularity() -> None:
+    assert RegConfig(granularity="channel").granularity == "channel"
+
+
+def test_reg_config_rejects_unknown_granularity() -> None:
+    """granularity is 'neuron' or 'channel' (conv spec 2026-06-10 addendum)."""
+    with pytest.raises(ValueError, match="granularity"):
+        RegConfig(granularity="layer")
 
 
 def test_data_config_defaults() -> None:

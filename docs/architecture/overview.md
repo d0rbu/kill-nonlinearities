@@ -51,7 +51,7 @@ class ForwardOutput:
     """A forward pass plus the pre-ReLU activations the regularizer consumes."""
 
     logits: Tensor                       # [B, C]
-    pre_activations: tuple[Tensor, ...]  # one [B, N_ℓ] per SelectiveReLU site, forward order
+    pre_activations: tuple[Tensor, ...]  # one [M, N_ℓ] per SelectiveReLU site, forward order
     site_names: tuple[str, ...]          # stable ids aligned with pre_activations, e.g. ("relu0", "relu1")
 
 
@@ -82,6 +82,17 @@ properties re-cast them to `list[nn.Linear]` / `list[SelectiveReLU]` while retur
 same live, registered modules (so callers can write `model.activations[i].set_modes(...)`).
 The regularizer consumes `output.pre_activations` directly.
 
+Both models subclass **`PreActModel`** (`models/base.py`) — the
+emits-its-own-pre-activations contract that trainer/analysis/surgery signatures accept —
+and are built via `build_model(config)` dispatching on `ModelConfig.kind`. For
+**`ReLUCNN`** (the convolutional model, [conv
+spec](../specs/2026-06-10-convolutional-relu-sites.md)) a "neuron" is an **individual
+output position** `(c, h, w)`, statistically identical to an MLP neuron (its `q_i` is
+sampled over the batch only): each conv site flattens its pre-activations to
+`[B, C·H·W]`, applies its `SelectiveReLU(C·H·W)` on that view, and reshapes back before
+pooling — so the `[M, N_ℓ]` contract above holds unchanged and per-position masking
+stays bit-exact.
+
 ## Module layout
 
 ```
@@ -89,9 +100,12 @@ src/kill_nonlinearities/
 ├── __init__.py          # package marker + __version__
 ├── config.py            # frozen dataclasses (ModelConfig, …, ExperimentConfig)
 ├── models/              # networks that EMIT pre-activations (no hooks)
+│   ├── __init__.py      #   build_model(ModelConfig) factory (kind: mlp | cnn)
 │   ├── outputs.py       #   ForwardOutput (frozen, eq=False)
 │   ├── activations.py   #   ActivationMode; SelectiveReLU (int64 mode buffer)
-│   └── mlp.py           #   ReLUMLP(ModelConfig) → ForwardOutput
+│   ├── base.py          #   PreActModel — the pre-activation contract
+│   ├── mlp.py           #   ReLUMLP(ModelConfig) → ForwardOutput
+│   └── cnn.py           #   ReLUCNN(ModelConfig) → ForwardOutput (neuron = (c,h,w) position)
 ├── regularization/      # the sign-consistency loss, as pure functions
 │   ├── surrogate.py     #   soft_sign(z, tau)
 │   ├── entropy.py       #   binary_entropy; batch/hard_fraction_positive; sign_entropy

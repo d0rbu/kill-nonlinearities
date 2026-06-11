@@ -44,7 +44,7 @@ from kill_nonlinearities.data.datasets import (
     make_probe_batch,
     select_probe_neurons,
 )
-from kill_nonlinearities.models.mlp import ReLUMLP
+from kill_nonlinearities.models import PreActModel, build_model
 from kill_nonlinearities.regularization.surrogate import soft_sign
 from kill_nonlinearities.surgery.apply import KPoint, evaluate_accuracy, k_sweep
 from kill_nonlinearities.training.logging import Logger, NullLogger
@@ -67,7 +67,7 @@ from kill_nonlinearities.viz.plots import (
 class ExperimentResult:
     """Aggregated outputs of a single experiment run (spec §4.13)."""
 
-    model: ReLUMLP
+    model: PreActModel
     train_result: TrainResult
     neuron_stats: list[NeuronStats]
     k_points: list[KPoint]
@@ -102,7 +102,7 @@ def run_experiment(
 
     # 2. Data + model + probe (probe neurons/batch are fixed across checkpoints).
     train_loader, val_loader, test_loader = make_dataloaders(config)
-    model = ReLUMLP(config.model).to(device)
+    model = build_model(config.model).to(device)
     probe_neurons = select_probe_neurons(
         model, config.probe.num_neurons, config.probe.seed
     )
@@ -159,7 +159,7 @@ def run_experiment(
     # 7. Per-checkpoint frames for both GIFs (one FrameStats per checkpoint).
     frames = collect_history(
         train_result.checkpoint_paths,
-        lambda: ReLUMLP(config.model),
+        lambda: build_model(config.model),
         probe_batch,
         val_loader,
         probe_neurons,
@@ -229,9 +229,10 @@ def config_from_json(path: Path) -> ExperimentConfig:
 
     def _model(d: dict[str, object]) -> ModelConfig:
         kwargs = dict(d)
-        if "hidden_dims" in kwargs:
-            dims: object = kwargs["hidden_dims"]
-            kwargs["hidden_dims"] = tuple(dims)  # ty: ignore[invalid-argument-type]
+        for key in ("hidden_dims", "conv_channels"):
+            if key in kwargs:
+                dims: object = kwargs[key]
+                kwargs[key] = tuple(dims)  # ty: ignore[invalid-argument-type]
         return ModelConfig(**kwargs)  # ty: ignore[invalid-argument-type]
 
     def _wandb(d: dict[str, object]) -> WandbConfig:

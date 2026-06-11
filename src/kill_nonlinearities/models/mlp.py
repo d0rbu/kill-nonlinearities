@@ -11,10 +11,11 @@ from torch import Tensor, nn
 
 from kill_nonlinearities.config import ModelConfig
 from kill_nonlinearities.models.activations import SelectiveReLU
+from kill_nonlinearities.models.base import PreActModel
 from kill_nonlinearities.models.outputs import ForwardOutput
 
 
-class ReLUMLP(nn.Module):
+class ReLUMLP(PreActModel):
     """Flatten → (Linear → SelectiveReLU)* → Linear head; emits ForwardOutput.
 
     The ``nn.ModuleList`` containers ``_linears``/``_activations`` are the single
@@ -34,6 +35,7 @@ class ReLUMLP(nn.Module):
             in_features = width
         self.head = nn.Linear(in_features, config.output_dim)
         self.site_names = tuple(f"relu{i}" for i in range(len(config.hidden_dims)))
+        self.site_group_sizes = tuple(1 for _ in config.hidden_dims)
 
     # ``ty`` types ``nn.ModuleList[int] -> Module``, erasing element types; these
     # accessors recover them while returning the live, registered modules.

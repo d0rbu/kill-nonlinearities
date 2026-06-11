@@ -12,17 +12,17 @@ from kill_nonlinearities.analysis.selection import (
     select_topk,
 )
 from kill_nonlinearities.analysis.statistics import NeuronStats
-from kill_nonlinearities.models.mlp import ReLUMLP
+from kill_nonlinearities.models.base import PreActModel
 
 
-def apply_modes(model: ReLUMLP, modes_by_site: dict[str, Tensor]) -> None:
+def apply_modes(model: PreActModel, modes_by_site: dict[str, Tensor]) -> None:
     """Set each ``SelectiveReLU``'s mode buffer from a full ``[N]`` tensor (§4.11)."""
     site_to_act = dict(zip(model.site_names, model.activations, strict=True))
     for site, modes in modes_by_site.items():
         site_to_act[site].set_modes(modes)
 
 
-def evaluate_accuracy(model: ReLUMLP, loader: DataLoader, device: str) -> float:
+def evaluate_accuracy(model: PreActModel, loader: DataLoader, device: str) -> float:
     """Top-1 accuracy over ``loader`` (spec §4.11)."""
     model.eval()
     correct = 0
@@ -44,7 +44,7 @@ class KPoint:
 
 
 def k_sweep(
-    model: ReLUMLP,
+    model: PreActModel,
     ranked: list[NeuronStats],
     k_grid: list[int],
     val_loader: DataLoader,
