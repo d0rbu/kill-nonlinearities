@@ -112,7 +112,12 @@ WANDB_MODE=disabled ...   # no logging at all (what the test suite uses)
   The agent runs `run_experiment` once per trial (each with a unique run name so trials don't
   share an output dir), logging to wandb and optimizing the `val/acc` metric. For an
   **offline** trade-off curve without wandb, use
-  [`scripts/lambda_sweep.py`](../../scripts/lambda_sweep.py) instead.
+  [`scripts/lambda_sweep.py`](../../scripts/lambda_sweep.py) instead — it takes
+  `--config` (any base config, e.g. `configs/cifar10.json`), `--prefix` (asset file
+  prefix), `--lambdas`, and `--plot-only` (re-render all figures from the saved
+  results JSON without retraining). Results are saved incrementally after each run
+  and **merged by λ** into an existing results JSON from the same config, so a sweep
+  can be extended with just the new values (e.g. `--lambdas 2 5 10`).
 
 ## `pre-commit`
 
