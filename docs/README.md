@@ -17,8 +17,7 @@ contents and back here.
 | --- | --- |
 | 🔬 **[research/](research/README.md)** | The canonical method writeup (motivation, the math, the elimination plan) **and** the running experiment log. Start here for *what* we're doing and *why*. |
 | 🛠️ **[development/](development/README.md)** | How to work in the repo: [setup](development/setup.md), [tooling](development/tooling.md), [testing](development/testing.md), [contributing](development/contributing.md). |
-| 🏗️ **[architecture/](architecture/README.md)** | The *realized* code structure and key design decisions (e.g. models emit their own pre-activations instead of using hooks; `SelectiveReLU` for masked surgery). |
-| 📐 **[specs/](specs/2026-06-08-phase1a-regularizer-and-surgery-design.md)** | Dated design specs. The [phase-1a spec](specs/2026-06-08-phase1a-regularizer-and-surgery-design.md) is the detailed design of record. |
+| 🏗️ **[architecture/](architecture/README.md)** | The *realized* code structure and key design decisions (e.g. models emit their own pre-activations instead of using hooks; `SelectiveReLU` for masked surgery; per-position conv neurons). |
 
 ## Where should I look?
 
@@ -27,13 +26,12 @@ contents and back here.
 - *"What are the tools and commands?"* → [development/tooling.md](development/tooling.md)
 - *"How are tests written here?"* → [development/testing.md](development/testing.md)
 - *"How is the code organized?"* → [architecture/overview.md](architecture/overview.md)
-- *"What's the detailed design for phase 1a?"* → [docs/specs/2026-06-08-phase1a-regularizer-and-surgery-design.md](specs/2026-06-08-phase1a-regularizer-and-surgery-design.md)
 - *"I'm a coding agent — what are the rules?"* → [AGENTS.md](../AGENTS.md)
 
 ## Project status
 
 🚧 **Phase 1a in progress.** The regularizer, training, analysis, and masked-activation
-surgery are implemented per the
-[phase-1a spec](specs/2026-06-08-phase1a-regularizer-and-surgery-design.md); real MNIST/CIFAR
-runs (λ>0) and their [experiment-log entries](research/README.md#experiment-log) are landing.
+surgery are implemented — see the [architecture overview](architecture/overview.md) for the
+realized design; real MNIST/CIFAR runs (λ>0) and their
+[experiment-log entries](research/README.md#experiment-log) are landing.
 The plan of record is the [roadmap](research/README.md#roadmap).

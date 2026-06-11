@@ -9,7 +9,7 @@ at the top; what we actually learn from experiments accumulates in
 
 > **Status:** Phase 1a **in progress** — the regularizer, training, analysis, and
 > masked-activation surgery are implemented (see the
-> [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md)). Real
+> [architecture overview](../architecture/overview.md)). Real
 > MNIST/CIFAR results land in the [experiment log](#experiment-log) as runs complete.
 
 ---
@@ -250,8 +250,8 @@ Tracked work, roughly in order. (File these as GitHub issues — see
 - [~] **Phase 1a — regularizer + analysis + masked surgery on a toy MLP** (MNIST/CIFAR).
   *In progress.* $\mathcal{L}_{\text{reg}}$, τ-annealing, λ-sweep via wandb Sweeps, the
   trade-off curve, $q_i$ histograms, and masked-activation surgery (accuracy-vs-k on val+test)
-  are implemented per the [phase-1a spec](../specs/2026-06-08-phase1a-regularizer-and-surgery-design.md).
-  Models emit their own pre-activations (see [architecture](../architecture/overview.md)).
+  are implemented. Models emit their own pre-activations (see
+  [architecture](../architecture/overview.md)).
 - [ ] **Phase 1b — small transformer (language modeling).** Apply the same regularizer to the
   MLP/FFN blocks of a small transformer.
 - [ ] **Phase 2 — structural surgery.** Fold linearized layers and prune dead units; measure
@@ -321,7 +321,7 @@ Tracked work, roughly in order. (File these as GitHub issues — see
 ### 2026-06-10 — CIFAR-10 CNN λ sweep (per-position): the asymmetry flips, and nonlinearity concentrates in conv0
 
 - **Setup:** first `ReLUCNN` sweep (per-position neuron semantics — see the
-  [conv spec](../specs/2026-06-10-convolutional-relu-sites.md)): conv
+  [architecture overview](../architecture/overview.md)): conv
   3→32→64→128 (3×3, pad 1, pool 2) → fc 256 → 10, 620k params, **57,600
   per-position neurons** (32,768 + 16,384 + 8,192 conv positions + 256 fc) /
   CIFAR-10 / 12 epochs / seed 0 / the 10-point λ grid / CPU (~10–17 min per
